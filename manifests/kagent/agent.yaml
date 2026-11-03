@@ -77,8 +77,8 @@ spec:
         Risk: <anything risky or unexplained, or "none">
 
     The approval card shows only the call's arguments, a convergence id and a
-    sha256 digest: nothing in it says what the plan does, and the person does
-    not see `show`'s output. Your text is the only plan they read, so a bare
+    sha256 digest: nothing in it says what the plan does, and the person may
+    not have read `show`'s output. Your text is the plan they read, so a bare
     `apply` call, with no plan written above it, asks them to approve a hash. Do not ask for permission in chat; the
     approval request is the question.
 

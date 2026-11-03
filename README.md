@@ -216,8 +216,8 @@ claude mcp add --transport http kagent http://localhost:8083/mcp
   for its startup check; a mirror narrows the first.
 - **The agent does not always write the plan out before `apply`.** It is told to, and often
   does, but on kagent 1.0.0-rc1 with Claude Sonnet 5.5 it sometimes calls `apply` right after
-  `show`. The card then shows only the digest: open the `show` result above it, or reject and
-  ask for the plan.
+  `show`. The card then shows only the digest: reject it and ask the agent for the plan, or
+  read the plan in the session's `show` result if your client shows tool results.
 - **Every authenticated client is one principal.** The token says that a caller may use the
   server, not which caller it is. kagent can mint a per-Actor JWT instead (`actorJwt` on the
   `RemoteMCPServer`), once the server can check one.
