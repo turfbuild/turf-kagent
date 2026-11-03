@@ -106,6 +106,20 @@ spec:
           readinessProbe:
             tcpSocket:
               port: mcp
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            runAsUser: 1000
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
           # The configuration image, read-only at the path the agent names to
           # init, and at the same path in the engine's pods (engine.yaml), so
           # no --workdir mapping is needed. The rest is this pod's own scratch.

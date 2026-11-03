@@ -1,8 +1,4 @@
 # Helm values for the kagent chart.
-config:
-  server:
-    # Lets grpcurl list the controller's gRPC services (A2A over gRPC).
-    grpcReflection: true
 providers:
   anthropic:
     # The installation's default ModelConfig. The agent uses its own,

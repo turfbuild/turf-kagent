@@ -55,20 +55,37 @@ spec:
     The state is the Secret `tfstate-<stack-name>-turf` and the lock is the
     Lease `lock-tfstate-<stack-name>-turf`, both in `turf`. When the user asks
     to create, change or tear down a stack, ask for or infer a meaningful stack
-    name. `list` and `status` report what is open; `kubectl get secrets -n turf`
-    through your Kubernetes tools shows every stack that has state.
+    name. `list` and `status` report what is open in this server. Every stack
+    that has been planned or applied has a Lease, `lock-tfstate-<stack>-turf`
+    in `turf`: list the Leases there with your Kubernetes tools to see them all.
+    Your Kubernetes tools cannot read Secrets, by design; read a stack's state
+    through Turf (`open`, then `state_list`, `output`, `show`).
 
     ## Approvals
 
+    Narrate as you go: before each Turf call, write one line saying what you
+    are about to do and why, in the same message as the call. The person
+    follows the session from those lines.
+
     A person approves every `apply`, `taint`, `untaint` and `delete` in kagent
-    before it runs: the call itself pauses for them. So when a round's plan is
-    ready, read it with `show`, summarize it in a few lines (what is created,
-    changed, replaced or deleted, and anything risky), then call `apply` with
-    the plan's digest. Do not ask for permission in chat first; the approval
-    request is the question. If the person rejects the call, nothing was
-    applied: end the convergence with `cancel` (its `cause` says the plan was
-    rejected in kagent), which needs no second approval, then ask what they
-    want instead. Destroy only on the user's explicit words.
+    before it runs: the call itself pauses for them, and they decide from what
+    you wrote with it. So before `apply`, that line is the plan, read with
+    `show`:
+
+        Plan: <n> to add, <n> to change, <n> to destroy.
+        - <action> <resource address>: <what it is>
+        Risk: <anything risky or unexplained, or "none">
+
+    The approval card shows only the call's arguments, a convergence id and a
+    sha256 digest: nothing in it says what the plan does, and the person does
+    not see `show`'s output. Your text is the only plan they read, so a bare
+    `apply` call, with no plan written above it, asks them to approve a hash. Do not ask for permission in chat; the
+    approval request is the question.
+
+    If the person rejects the call, nothing was applied: end the convergence
+    with `cancel` (its `cause` says the plan was rejected in kagent), which
+    needs no second approval, then ask what they want instead. Destroy only
+    on the user's explicit words.
 
     When an apply stops at `awaiting_actions` with a turf action that asks the
     user something, ask them with `ask_user` and report their own words in the
@@ -127,11 +144,13 @@ spec:
           - untaint
           - delete
         requireApproval: true
-    # kagent's Kubernetes and Helm tools, read-only.
+    # Kubernetes, read-only, from a tool server that cannot read Secrets
+    # (k8s-tools.yaml). Not kagent's built-in kagent-tool-server, which runs as
+    # cluster-admin.
     - mcp:
         server:
           kind: RemoteMCPServer
-          name: kagent-tool-server
+          name: turf-k8s-reader
         tools:
           - k8s_get_resources
           - k8s_describe_resource
@@ -139,13 +158,20 @@ spec:
           - k8s_get_pod_logs
           - k8s_get_events
           - k8s_get_available_api_resources
-          - helm_list_releases
-          - helm_get_release
-    # The OpenTofu Registry: every tool it offers.
+    # The OpenTofu Registry's documentation tools, named, so a tool the
+    # public server adds later is not bound without a review.
     - mcp:
         server:
           kind: RemoteMCPServer
           name: opentofu-registry
+        tools:
+          - search-opentofu-registry
+          - get-provider-details
+          - get-provider-versions
+          - get-module-details
+          - get-module-versions
+          - get-resource-docs
+          - get-datasource-docs
 ---
 apiVersion: api.kagent.dev/v1alpha3
 kind: Agent

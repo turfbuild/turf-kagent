@@ -46,3 +46,16 @@ spec:
   protocol: STREAMABLE_HTTP
   timeout: 30s
   sseReadTimeout: 5m0s
+---
+# The agent's Kubernetes tools: kagent's tool server in read-only mode, as a
+# ServiceAccount that cannot read Secrets (k8s-tools.yaml).
+apiVersion: api.kagent.dev/v1alpha3
+kind: RemoteMCPServer
+metadata:
+  name: turf-k8s-reader
+  namespace: kagent
+spec:
+  description: Read-only Kubernetes tools that cannot read Secrets
+  url: http://turf-k8s-reader.kagent.svc.cluster.local:8084/mcp
+  protocol: STREAMABLE_HTTP
+  timeout: 30s

@@ -1,8 +1,9 @@
 # How the agent runs: kagent's own runtime (the image of the installed
 # release), as an Actor on Agent Substrate's default WorkerPool, a gVisor
 # sandbox per Session. Between turns the Actor is suspended and snapshotted to
-# the bundled object store; point snapshotPolicy at your own bucket in
-# production.
+# the bundled object store. A snapshot holds what the session holds (the
+# plans and state the agent read, never the token or the model key): point
+# snapshotPolicy at a bucket you control in production.
 apiVersion: api.kagent.dev/v1alpha3
 kind: Harness
 metadata:

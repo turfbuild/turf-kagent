@@ -26,8 +26,8 @@ ns turf    turf-mcp-server :3000/mcp ──► restate-server (RestateCluster "t
 
 | Namespace | What | Manifest |
 |---|---|---|
-| `kagent` | the controller and UI; the agent's `Harness`, `AgentTemplate` and `Agent`; a `ModelConfig` for Anthropic; a `RemoteMCPServer` for Turf and one for the OpenTofu Registry | [`manifests/kagent/`](manifests/kagent) |
-| `ate-system` | Agent Substrate: the WorkerPool the agent's sandbox runs on, and the egress gateway every connection from the sandbox goes through | `kagent install` |
+| `kagent` | the controller and UI; the WorkerPool the agent's sandbox runs on; the agent's `Harness`, `AgentTemplate` and `Agent`; a `ModelConfig` for Anthropic; `RemoteMCPServer`s for Turf, the OpenTofu Registry and a read-only Kubernetes tool server | [`manifests/kagent/`](manifests/kagent) |
+| `ate-system` | Agent Substrate's control plane, and the egress gateway every connection from the sandbox goes through | `kagent install` |
 | `turf` | everything Turf: restate-server, the MCP server, the engine, and the state | [`manifests/turf/`](manifests/turf) |
 | `knative-serving`, `kourier-system` | Knative Serving and its Kourier gateway | [`setup/knative.sh`](setup/knative.sh) |
 | `restate-operator` | the Restate operator | [`setup/restate-operator.sh`](setup/restate-operator.sh) |
@@ -35,16 +35,18 @@ ns turf    turf-mcp-server :3000/mcp ──► restate-server (RestateCluster "t
 **The MCP server** ([`mcp-server.yaml`](manifests/turf/mcp-server.yaml)) is the agent's toolbox: it
 parses the configuration, opens state, and drives the engine through restate-server's ingress.
 Its ServiceAccount can read and write Secrets and Leases in `turf`, the OpenTofu kubernetes
-backend's two objects, and nothing else.
+backend's two objects, and nothing else (that is every Secret in `turf`; see Notes).
 
 **The engine** ([`engine.yaml`](manifests/turf/engine.yaml)) plans and applies, and it is where
-provider plugins run, so it holds the providers' credentials (here, a ServiceAccount the
-demo configuration's kubernetes provider uses in-cluster). It is a `RestateDeployment` in
-Knative mode. The Restate operator creates a Knative Configuration and a cluster-local Route
-for it and registers the Route with restate-server. Knative scales the pods with the work in
-flight: `minScale: 0`, `maxScale: 4`, a new pod past 8 concurrent requests. A new Turf minor
-release gets a new `knative.tag`, which the operator registers as a new deployment while the
-old one drains what it started.
+provider plugins run, so it holds the providers' credentials. Here that is its
+ServiceAccount, which the demo configuration's kubernetes provider uses in-cluster, with a
+ClusterRole for exactly what the demo manages (namespaces and ConfigMaps): what the engine may
+do is what an approved plan may do. It is a `RestateDeployment` in Knative mode. The Restate
+operator creates a Knative Configuration and a cluster-local Route for it and registers the
+Route with restate-server. Knative scales the pods with the work in flight: `minScale: 0`,
+`maxScale: 4`, and `target: 8` concurrent requests per pod as the autoscaler's aim. A new Turf
+minor release gets a new `knative.tag`, which the operator registers as a new deployment while
+the old one finishes what it started.
 
 **restate-server** ([`restate-cluster.yaml`](manifests/turf/restate-cluster.yaml)) is a
 `RestateCluster`, one node with its data on a PersistentVolume, provisioned by the operator.
@@ -62,7 +64,11 @@ Three controls, each independent of the others.
    `Authorization: Bearer <token>` (`TURF_MCP_AUTH_TOKEN`), and 401 to anything else. kagent
    sends it from the `turf-mcp-auth` Secret named in the `RemoteMCPServer`'s `headersFrom`. The
    agent's sandbox never holds it: the sandbox sends a placeholder, and the egress gateway puts
-   the real value in on the way out. The same goes for the Anthropic key.
+   the real value in on the way out. The same goes for the Anthropic key. Nor can the agent
+   fetch them: its Kubernetes tools come from a tool server of its own
+   ([`k8s-tools.yaml`](manifests/kagent/k8s-tools.yaml)), read-only, whose ServiceAccount has
+   Kubernetes' `view` role, which leaves Secrets out. (kagent's built-in `kagent-tool-server`
+   runs as cluster-admin, so this agent does not bind it.)
 2. **Request identity, restate-server → the engine.** The RestateCluster signs every request
    it sends the engine with the private key in `turf-engine-identity`
    (`security.requestSigningPrivateKey`); the engine serves nothing that key did not sign
@@ -71,19 +77,27 @@ Three controls, each independent of the others.
    admits only what `security.networkPeers` names: the MCP server on the ingress, the engine
    on the admin API (its startup version check). Ours
    ([`network-policies.yaml`](manifests/turf/network-policies.yaml)) admit kagent's controller
-   (tool discovery) and egress gateway to the MCP server, and only Knative's data path to the
-   engine. Agent Substrate's own egress policy lets the agent's sandbox reach the model, the
-   two MCP servers and nothing else.
+   (tool discovery) and egress gateway to the MCP server and the Kubernetes tool server, and
+   only Knative's data path to the engine's pods. Agent Substrate's own egress policy lets the
+   agent's sandbox reach the model, its MCP servers and nothing else. Knative's data path is
+   shared, though: Kourier's internal gateway serves every Knative service in the cluster, so
+   any pod can reach the engine through its Route, and there the signature (control 2) is what
+   refuses it.
 
 Checked from a pod in the cluster with no business there (`kubectl run stray
 --image=curlimages/curl …`):
 
 ```
-curl -m 5 http://restate.turf.svc:8080/restate/health            # timed out
-curl -m 5 http://restate.turf.svc:9070/health                    # timed out
-curl -m 5 http://turf-mcp-server.turf.svc:3000/mcp               # timed out
-curl -m 5 http://<engine pod IP>:8012/                           # timed out
+curl -m 5 http://restate.turf.svc:8080/restate/health                   # timed out
+curl -m 5 http://restate.turf.svc:9070/health                           # timed out
+curl -m 5 http://turf-mcp-server.turf.svc:3000/mcp                      # timed out
+curl -m 5 http://turf-k8s-reader.kagent.svc:8084/mcp                    # timed out
+curl -m 5 http://<engine pod IP>:8012/                                  # timed out
+curl --http2-prior-knowledge http://turf-engine-v1-3.turf.svc.cluster.local/discover   # 401
 ```
+
+The last one goes through Kourier and reaches the engine, which refuses it: restate-server did
+not sign it. The engine answers one path unsigned, `/health`.
 
 and through a port-forward to the MCP server, without the token:
 
@@ -98,10 +112,11 @@ Turf calls that change nothing on their own run freely: `init`, `open`, `up`, `d
 `plan`, `show` and the rest stop at Turf's plan or at its approval point. The four that change
 infrastructure or state, `apply`, `taint`, `untaint` and `delete`, are bound with
 `requireApproval: true`, so each one pauses the agent until a person approves it in the kagent
-UI. `apply` carries the digest of the plan it applies, so the approval covers exactly the plan
-the agent summarized, and nothing else. A turf action that asks the user something reaches them
-through kagent's `ask_user`. The other two bindings are kagent's read-only Kubernetes and Helm
-tools and the OpenTofu Registry's documentation tools.
+UI. `apply` carries the digest of the plan it applies, so the approval covers exactly that plan,
+and nothing else. The card shows the call's arguments, the convergence and the digest; the plan
+itself is the `show` call just above it in the session (see Notes). A turf action that asks the
+user something reaches them through kagent's `ask_user`. The other two bindings are read-only
+Kubernetes tools and the OpenTofu Registry's documentation tools, each named.
 
 ## Run it
 
@@ -118,7 +133,10 @@ export ANTHROPIC_API_KEY=...
 
 [`setup/up.sh`](setup/up.sh) runs the four setup scripts in order (Knative, the Restate operator,
 kagent, the Secrets), applies `manifests/turf` and `manifests/kagent`, and waits for the agent.
-Every step is safe to run again. The Secrets' source files go in `.secrets/`, which git ignores.
+Every step is safe to run again, and it refuses a kubectl context that is not a kind cluster
+unless you set `FORCE=1`. The Secrets' source files go in `.secrets/`, which git ignores; on a
+fresh clone against a cluster that already has the Secrets, `setup/secrets.sh` copies them back
+instead of minting new ones.
 
 In one terminal, watch the engine. It sits at zero:
 
@@ -140,7 +158,7 @@ kubectl port-forward -n kagent svc/kagent-ui 8082:8080      # http://localhost:8
    > the ConfigMap `greeting` in it. Nothing is risky and there are no invocations.
 
    The UI shows an approval card for `apply`, with the convergence and the plan digest. An
-   engine pod appears in the first terminal as soon as the round starts. Approve:
+   engine pod appears in the first terminal as soon as the agent opens the workspace. Approve:
 
    > I deployed the `demo` stack, and it converged in one round. Apply complete! Resources: 2
    > added, 0 changed, 0 destroyed. […] The state is in the Secret `tfstate-demo-turf` in the
@@ -148,7 +166,8 @@ kubectl port-forward -n kagent svc/kagent-ui 8082:8080      # http://localhost:8
 
    The engine pod goes away a minute or so after the round ends.
 2. **"What stacks exist, and what is in demo?"** Read-only, no pause: the agent lists the
-   `tfstate-*` Secrets, reads the state, and shows the ConfigMap with its Kubernetes tools.
+   stacks' Leases in `turf` with its Kubernetes tools, then reads each stack's state through
+   Turf. Ask it for a Secret and it cannot: the tool server's role has no access to them.
 3. **"Tear down the demo stack."** Another approval card, this time for a destroy plan. Reject
    it and nothing is applied: the agent cancels the convergence and asks what you want instead.
    Ask again and approve, and the namespace is gone.
@@ -186,18 +205,37 @@ claude mcp add --transport http kagent http://localhost:8083/mcp
   NetworkPolicy selects one part's pods.
 - **The token crosses the cluster network in cleartext**, from the egress gateway to the MCP
   server over `http://`. Serve the MCP server over TLS (or run a mesh) where that matters.
+- **The MCP server can read every Secret in `turf`**, the engine's signing key and its own
+  token included, because the state backend needs Secrets there and Kubernetes RBAC cannot
+  scope `create` and `list` by name. Everything Turf shares one namespace here; to narrow it,
+  keep the state in a namespace of its own (`backend_config.namespace` in the agent's prompt)
+  and move the Role there.
+- **The engine's ClusterRole is the demo's**: namespaces and ConfigMaps. Widen it to what your
+  configurations declare. The engine also runs provider plugins from the registry
+  ([`cli-config.yaml`](manifests/turf/cli-config.yaml)) and reaches restate-server's admin API
+  for its startup check; a mirror narrows the first.
+- **The agent does not always write the plan out before `apply`.** It is told to, and often
+  does, but on kagent 1.0.0-rc1 with Claude Sonnet 5.5 it sometimes calls `apply` right after
+  `show`. The card then shows only the digest: open the `show` result above it, or reject and
+  ask for the plan.
 - **Every authenticated client is one principal.** The token says that a caller may use the
   server, not which caller it is. kagent can mint a per-Actor JWT instead (`actorJwt` on the
   `RemoteMCPServer`), once the server can check one.
 - **A rejection's reason does not reach the agent** on kagent 1.0.0-rc1's `kagent` harness:
   it learns that a call was rejected, not why. The system prompt has it cancel the convergence
   and ask.
+- **Session snapshots** go to the object store kagent installs (`snapshotPolicy` in
+  [`harness.yaml`](manifests/kagent/harness.yaml)). They hold what the session holds: the
+  plans and state the agent read, not the token or the model key.
 - **Long applies.** A provider's apply is one request to the engine. restate-server allows a
   request 30 minutes (`abort-timeout`, raised from 10), and the engine's Knative revision
   allows an hour; raise both together for a slower resource. The engine sets nothing of its
   own.
 - **Scale from zero has a cost.** Each new engine pod installs providers and modules the first
   time a step lands on it; its caches are its own and go when Knative scales it away.
+- **Keep `knative.tag` and the image together.** A new tag is a new Restate deployment; the
+  same tag with a new image updates in place, which Restate allows only for a change compatible
+  with invocations in flight.
 - **Versions.** kagent 1.0.0-rc1, Knative Serving 1.24.0 with Kourier, the Restate operator
   3.2.0, restate-server 1.8.1, Turf 1.3.0, on kind with Kubernetes 1.37.0.
 
@@ -216,5 +254,5 @@ https://turf.build/newsletter/. Everything else: https://turf.build/community/.
 ## Trademarks
 
 Terraform is a registered trademark of HashiCorp. Kubernetes is a registered trademark, and
-Knative a trademark, of The Linux Foundation. Anthropic and Claude are trademarks of Anthropic, PBC.
+OpenTofu and Knative trademarks, of The Linux Foundation. Anthropic and Claude are trademarks of Anthropic, PBC.
 Turf is not affiliated with, endorsed by or sponsored by any of them.

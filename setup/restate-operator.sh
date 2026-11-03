@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The Restate operator: runs restate-server from a RestateCluster and registers,
 # versions and drains the engine from a RestateDeployment. Its CRDs come with
-# the chart. Safe to run again.
+# the chart. Safe to run again. On an upgrade, check the operator's release
+# notes: a CRD change may need applying before the new image rolls out.
 set -euo pipefail
 RESTATE_OPERATOR_VERSION=${RESTATE_OPERATOR_VERSION:-3.2.0}
 

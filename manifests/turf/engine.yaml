@@ -16,9 +16,20 @@ metadata:
   namespace: turf
 ---
 # Providers run in the engine, so a kubernetes or helm provider configured
-# in-cluster authenticates as this ServiceAccount. The demo configuration
-# creates a namespace and what is in it; narrow this to what your
-# configurations manage.
+# in-cluster authenticates as this ServiceAccount: what it may do is what the
+# agent's approved plans may do to the cluster. The demo configuration creates
+# a namespace and a ConfigMap in it, so this grants exactly that. A
+# configuration that manages more needs more: widen the ClusterRole to what it
+# declares (or, for a cluster the agent fully runs, bind cluster-admin).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: turf-engine
+rules:
+  - apiGroups: [""]
+    resources: [namespaces, configmaps]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -29,7 +40,7 @@ subjects:
     namespace: turf
 roleRef:
   kind: ClusterRole
-  name: cluster-admin
+  name: turf-engine
   apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: restate.dev/v1beta1
@@ -40,9 +51,12 @@ metadata:
 spec:
   deploymentMode: knative
   knative:
-    # One tag per Turf minor release. A new tag is a new deployment: new
-    # rounds go to it, and the old one serves what it started until it
-    # drains. The same tag updates in place (a new Knative Revision).
+    # One tag per Turf minor release. A new tag is a new deployment:
+    # restate-server sends new work to it, and the old one finishes what it
+    # started, then drains. Keeping the tag updates in place (a new Knative
+    # Revision under the same deployment), which Restate allows only for a
+    # change compatible with invocations in flight: change the tag with the
+    # image.
     tag: v1-3
     minScale: 0
     maxScale: 4
@@ -93,6 +107,20 @@ spec:
           ports:
             - name: h2c
               containerPort: 9080
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 2Gi
+          securityContext:
+            runAsUser: 1000
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
           volumeMounts:
             - name: configuration
               mountPath: /turf/config

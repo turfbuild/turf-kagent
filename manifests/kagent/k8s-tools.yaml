@@ -1,0 +1,140 @@
+# The agent's Kubernetes tools: a second instance of kagent's tool server, in
+# read-only mode, with a ServiceAccount that cannot read Secrets.
+#
+# kagent's built-in tool server (kagent-tool-server) runs as cluster-admin, so
+# an agent bound to it could read any Secret in the cluster, the Turf token,
+# the engine's signing key and the model's API key included, however few of
+# its tools the binding names. This one is bound to Kubernetes' built-in
+# `view` ClusterRole, which leaves Secrets out, plus the Leases in `turf`: one
+# per stack, the state backend's locks, which say what stacks exist and hold
+# no data.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: turf-k8s-reader
+  namespace: kagent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: turf-k8s-reader-view
+subjects:
+  - kind: ServiceAccount
+    name: turf-k8s-reader
+    namespace: kagent
+roleRef:
+  kind: ClusterRole
+  name: view
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: turf-stack-leases
+  namespace: turf
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: turf-k8s-reader-leases
+  namespace: turf
+subjects:
+  - kind: ServiceAccount
+    name: turf-k8s-reader
+    namespace: kagent
+roleRef:
+  kind: Role
+  name: turf-stack-leases
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: turf-k8s-reader
+  namespace: kagent
+spec:
+  selector:
+    app: turf-k8s-reader
+  ports:
+    - name: mcp
+      port: 8084
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: turf-k8s-reader
+  namespace: kagent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: turf-k8s-reader
+  template:
+    metadata:
+      labels:
+        app: turf-k8s-reader
+    spec:
+      serviceAccountName: turf-k8s-reader
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: tool-server
+          # The release kagent installs as its own tool server (kagent-tools).
+          image: ghcr.io/kagent-dev/kagent/tools:0.3.0
+          command: ["/tool-server"]
+          args:
+            - --port=8084
+            - --read-only
+            # The Kubernetes provider only; read-only mode drops its writes.
+            # The AgentTemplate binds a subset of what is left.
+            - --tools=k8s
+          ports:
+            - name: mcp
+              containerPort: 8084
+          readinessProbe:
+            tcpSocket:
+              port: mcp
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+---
+# Only kagent's controller (tool discovery) and Agent Substrate's egress
+# gateway (the agent's calls) reach it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: turf-k8s-reader
+  namespace: kagent
+spec:
+  podSelector:
+    matchLabels:
+      app: turf-k8s-reader
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kagent
+              app.kubernetes.io/component: controller
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ate-system
+          podSelector:
+            matchLabels:
+              app: atenet-egress
+      ports:
+        - port: 8084

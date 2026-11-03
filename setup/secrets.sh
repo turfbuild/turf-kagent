@@ -8,12 +8,25 @@
 #   kagent/turf-mcp-auth       authorization: "Bearer <token>", the header
 #                              value kagent sends
 # The key pair comes from the engine itself, run once in Docker. Keep
-# .secrets/ out of version control (.gitignore does). Safe to run again.
+# .secrets/ out of version control (.gitignore does). Safe to run again: with
+# no .secrets/ but the Secrets already in the cluster (a fresh clone), it
+# copies them back rather than minting new ones, because restate-server, the
+# engine and the MCP server read them only at start.
 set -euo pipefail
 TURF_VERSION=${TURF_VERSION:-v1.3.0}
 here=$(cd "$(dirname "$0")/.." && pwd)
 dir=${SECRETS_DIR:-$here/.secrets}
 mkdir -p "$dir" && chmod 700 "$dir"
+
+# A fresh clone against a cluster that has the Secrets: recover them.
+recover() { # namespace secret key file
+  [ -s "$dir/$4" ] && return 0
+  local v; v=$(kubectl -n "$1" get secret "$2" -o "jsonpath={.data.$3}" 2>/dev/null) || return 0
+  [ -n "$v" ] && (umask 077 && printf '%s' "$v" | base64 -d > "$dir/$4")
+}
+recover turf turf-engine-identity 'identity\.pem' identity.pem
+recover turf turf-engine-identity public-key public-key
+recover turf turf-mcp-auth token mcp-token
 
 if [ ! -s "$dir/identity.pem" ]; then
   docker run --rm --user "$(id -u)" -v "$dir:/k" "ghcr.io/turfbuild/turf-mcp-server:$TURF_VERSION" \
