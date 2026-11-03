@@ -1,0 +1,120 @@
+# turf-engine: Turf's planning and execution, and where provider plugins run,
+# as a Knative service the Restate operator manages (RestateDeployment in
+# knative mode). The operator creates a Knative Configuration and a
+# cluster-local Route per tag, registers the Route's address with
+# restate-server, and keeps the old tag's deployment until its invocations
+# drain. Knative scales the pods with the work: from zero when a round starts,
+# out while its steps run, back to zero when the cluster is quiet.
+#
+# The engine serves only requests restate-server signs (TURF_ENGINE_IDENTITY_KEYS
+# is the public half of the key on the RestateCluster), and network-policies.yaml
+# admits only Knative's data path besides.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: turf-engine
+  namespace: turf
+---
+# Providers run in the engine, so a kubernetes or helm provider configured
+# in-cluster authenticates as this ServiceAccount. The demo configuration
+# creates a namespace and what is in it; narrow this to what your
+# configurations manage.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: turf-engine
+subjects:
+  - kind: ServiceAccount
+    name: turf-engine
+    namespace: turf
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: restate.dev/v1beta1
+kind: RestateDeployment
+metadata:
+  name: turf-engine
+  namespace: turf
+spec:
+  deploymentMode: knative
+  knative:
+    # One tag per Turf minor release. A new tag is a new deployment: new
+    # rounds go to it, and the old one serves what it started until it
+    # drains. The same tag updates in place (a new Knative Revision).
+    tag: v1-3
+    minScale: 0
+    maxScale: 4
+    # Concurrent requests per pod before Knative adds one. A round's steps
+    # are many short requests and a few long ones (a provider's apply).
+    target: 8
+  restate:
+    register:
+      cluster: turf
+  template:
+    metadata:
+      labels:
+        app: turf-engine
+    spec:
+      serviceAccountName: turf-engine
+      # The longest a request may run. A provider's apply is one request,
+      # capped first by restate-server's abort-timeout (30 minutes,
+      # restate-cluster.yaml); this is the outer bound. Knative's own ceiling,
+      # max-revision-timeout-seconds, is raised to match (setup/knative.sh).
+      timeoutSeconds: 3600
+      containers:
+        - name: turf-engine
+          # The same image as mcp-server.yaml: keep the two tags equal.
+          image: ghcr.io/turfbuild/turf-mcp-server:v1.3.0
+          command: ["/turf-engine"]
+          args:
+            - --addr=0.0.0.0:9080
+            # The operator registers the Route; the engine only checks, at
+            # start, that restate-server is a release it supports.
+            - --register=false
+            - --admin-addr=http://restate.turf.svc:9070
+            # Each pod's own caches, emptied when Knative scales it away: a
+            # pod installs providers and modules again the first time a step
+            # lands on it.
+            - --plugin-cache-dir=/turf/plugins
+            - --data-dir=/turf/data
+          env:
+            - name: TURF_ENGINE_IDENTITY_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: turf-engine-identity
+                  key: public-key
+            - name: TF_CLI_CONFIG_FILE
+              value: /turf/cli/turf.tfrc
+          # The engine speaks HTTP/2 without TLS, and nothing else: Knative's
+          # port name says so (h2c), and its default readiness check, a TCP
+          # connect, is the only kind it answers.
+          ports:
+            - name: h2c
+              containerPort: 9080
+          volumeMounts:
+            - name: configuration
+              mountPath: /turf/config
+              readOnly: true
+            - name: data
+              mountPath: /turf/data
+            - name: plugins
+              mountPath: /turf/plugins
+            - name: cli-config
+              mountPath: /turf/cli
+              readOnly: true
+      volumes:
+        # Knative admits image volumes with kubernetes.podspec-volumes-image
+        # (setup/knative.sh).
+        - name: configuration
+          image:
+            reference: ghcr.io/turfbuild/turf-examples/kubernetes-in-cluster:1.0.0
+            pullPolicy: IfNotPresent
+        - name: data
+          emptyDir: {}
+        - name: plugins
+          emptyDir: {}
+        - name: cli-config
+          configMap:
+            name: turf-cli-config

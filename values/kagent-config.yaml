@@ -1,0 +1,7 @@
+# kagent CLI configuration for setup/kagent.sh: Anthropic as the default model
+# provider (the CLI reads ANTHROPIC_API_KEY), and Helm values layered over the
+# chart's.
+install:
+  defaultModelProvider: Anthropic
+  kagent:
+    valuesFiles: [kagent-values.yaml]

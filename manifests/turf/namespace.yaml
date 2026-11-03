@@ -1,0 +1,9 @@
+# One namespace for everything Turf: restate-server (the RestateCluster named
+# after it), the MCP server, the engine, and the OpenTofu state the MCP server
+# keeps in Secrets. The operator uses a namespace that already exists without
+# taking it over, so deleting the RestateCluster leaves the namespace and the
+# state where they are.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: turf

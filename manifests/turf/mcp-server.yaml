@@ -1,0 +1,138 @@
+# turf-mcp-server: the tools kagent's agent calls, served over streamable HTTP
+# at :3000/mcp and listed to kagent by the RemoteMCPServer in
+# manifests/kagent/remote-mcp-servers.yaml. It parses the configuration,
+# drives the engine through restate-server's ingress, and keeps each
+# workspace's state in the cluster (the OpenTofu kubernetes backend: a Secret
+# and a Lease per workspace, in this namespace).
+#
+# Every request must carry "Authorization: Bearer <token>", the token in the
+# turf-mcp-auth Secret (setup/secrets.sh); anything else gets 401. kagent sends
+# the same token from its own copy of the Secret, in the kagent namespace.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: turf-mcp-server
+  namespace: turf
+---
+# The state backend's rights, and no others: Secrets and Leases in this
+# namespace. The server never runs a provider, so it needs nothing else.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: turf-state
+  namespace: turf
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: turf-mcp-server-state
+  namespace: turf
+subjects:
+  - kind: ServiceAccount
+    name: turf-mcp-server
+    namespace: turf
+roleRef:
+  kind: Role
+  name: turf-state
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: turf-mcp-server
+  namespace: turf
+spec:
+  selector:
+    app: turf-mcp-server
+  ports:
+    - name: mcp
+      port: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: turf-mcp-server
+  namespace: turf
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: turf-mcp-server
+  template:
+    metadata:
+      labels:
+        app: turf-mcp-server
+    spec:
+      serviceAccountName: turf-mcp-server
+      containers:
+        - name: turf-mcp-server
+          # The same image as engine.yaml: keep the two tags equal.
+          image: ghcr.io/turfbuild/turf-mcp-server:v1.3.0
+          args:
+            - --transport=http
+            - --addr=:3000
+            - --tmp-dir=/turf/tmp
+            - --plugin-cache-dir=/turf/plugins
+            # Every convergence call returns within this deadline, with the
+            # stage it reached for the agent to call again. The RemoteMCPServer
+            # gives a call 30 seconds: keep the deadline under its timeout.
+            - --deadline=25s
+          env:
+            - name: TURF_MCP_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: turf-mcp-auth
+                  key: token
+            # The engine this server drives: restate-server's ingress, with
+            # turf-engine registered behind it by the operator.
+            - name: TURF_RESTATE_URL
+              value: http://restate.turf.svc:8080
+            # Where init's module install goes, as tofu's TF_DATA_DIR: the
+            # configuration at /turf/config is read-only.
+            - name: TF_DATA_DIR
+              value: /turf/data
+            - name: TF_CLI_CONFIG_FILE
+              value: /turf/cli/turf.tfrc
+          ports:
+            - name: mcp
+              containerPort: 3000
+          readinessProbe:
+            tcpSocket:
+              port: mcp
+          # The configuration image, read-only at the path the agent names to
+          # init, and at the same path in the engine's pods (engine.yaml), so
+          # no --workdir mapping is needed. The rest is this pod's own scratch.
+          volumeMounts:
+            - name: configuration
+              mountPath: /turf/config
+              readOnly: true
+            - name: data
+              mountPath: /turf/data
+            - name: plugins
+              mountPath: /turf/plugins
+            - name: tmp
+              mountPath: /turf/tmp
+            - name: cli-config
+              mountPath: /turf/cli
+              readOnly: true
+      volumes:
+        - name: configuration
+          image:
+            reference: ghcr.io/turfbuild/turf-examples/kubernetes-in-cluster:1.0.0
+            pullPolicy: IfNotPresent
+        - name: data
+          emptyDir: {}
+        - name: plugins
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: cli-config
+          configMap:
+            name: turf-cli-config

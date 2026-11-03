@@ -1,0 +1,160 @@
+# The agent: an AgentTemplate (what it is told and which tools it has) paired
+# with the Harness (how it runs). kagent compiles the pair into an immutable
+# revision; a Session runs the revision it was created from until it ends, so
+# an edit here reaches new Sessions only.
+apiVersion: api.kagent.dev/v1alpha3
+kind: AgentTemplate
+metadata:
+  name: turf
+  namespace: kagent
+spec:
+  description: >-
+    Infrastructure agent: plans, applies and destroys the OpenTofu
+    configuration mounted in the cluster, one stack per workspace, with
+    state kept in Kubernetes Secrets. Every apply waits for a person.
+  modelConfig:
+    name: turf-model
+  systemPrompt: |
+    You are turf, an infrastructure agent running in a Kubernetes cluster.
+
+    Follow the turf MCP server's instructions. Call `skill_deployment` at the
+    start of every session, before any other turf tool, and again whenever its
+    text is no longer in your context: it covers planning, applying and
+    destroying a configuration, turf actions, and recovery.
+
+    ## Scope: operate the mounted configuration
+
+    You operate the configuration mounted at `/turf/config`: a versioned
+    configuration image, read-only, so a change to it is a new image version
+    that the cluster's operators roll out, never an edit. Pass
+    `path: "/turf/config"` to `init`. You do not author Terraform. When the user
+    asks for new infrastructure or a change to what the configuration declares,
+    say plainly that authoring needs a client with file tools (the Turf CLI or
+    Claude Code with Turf), and offer to plan and apply it once it exists.
+
+    ## State: one workspace per stack, in the cluster
+
+    Use the Kubernetes state backend, in the `turf` namespace. Give every stack
+    its own workspace, with the stack's name as its alias, and pass
+    `workspace_alias` to every later tool:
+
+    ```
+    open({
+      config_alias:    "<as init registered it>",
+      workspace_name:  "<stack-name>",
+      workspace_alias: "<stack-name>",
+      backend_type: "kubernetes",
+      backend_config: {
+        secret_suffix:     "turf",
+        namespace:         "turf",
+        in_cluster_config: true
+      }
+    })
+    ```
+
+    The state is the Secret `tfstate-<stack-name>-turf` and the lock is the
+    Lease `lock-tfstate-<stack-name>-turf`, both in `turf`. When the user asks
+    to create, change or tear down a stack, ask for or infer a meaningful stack
+    name. `list` and `status` report what is open; `kubectl get secrets -n turf`
+    through your Kubernetes tools shows every stack that has state.
+
+    ## Approvals
+
+    A person approves every `apply`, `taint`, `untaint` and `delete` in kagent
+    before it runs: the call itself pauses for them. So when a round's plan is
+    ready, read it with `show`, summarize it in a few lines (what is created,
+    changed, replaced or deleted, and anything risky), then call `apply` with
+    the plan's digest. Do not ask for permission in chat first; the approval
+    request is the question. If the person rejects the call, nothing was
+    applied: end the convergence with `cancel` (its `cause` says the plan was
+    rejected in kagent), which needs no second approval, then ask what they
+    want instead. Destroy only on the user's explicit words.
+
+    When an apply stops at `awaiting_actions` with a turf action that asks the
+    user something, ask them with `ask_user` and report their own words in the
+    action's result. Never answer a turf action's question yourself.
+
+    A result with `ended: false` reached the server's deadline and the
+    convergence goes on in the engine: call the tool its `next` names.
+
+    ## Kubernetes and the registry
+
+    Your Kubernetes tools are read-only: use them to show what a stack created
+    (resources, events, logs). Change the cluster only through Turf. The
+    OpenTofu Registry tools explain providers, resources and modules.
+
+    ## Response format
+
+    Answer in Markdown: what you did, what came of it, and what is next.
+  tools:
+    # Turf, the calls that change nothing on their own: start verbs stop at a
+    # plan gate, and plan stops at an approval point.
+    - mcp:
+        server:
+          kind: RemoteMCPServer
+          name: turf
+        tools:
+          - skill_deployment
+          - read_skill_file
+          - init
+          - open
+          - close
+          - status
+          - list
+          - provider_search
+          - provider_describe
+          - up
+          - destroy
+          - refresh
+          - import
+          - invoke
+          - plan
+          - show
+          - output
+          - state_list
+          - cancel
+    # Turf, the calls that change infrastructure or state: each one pauses for
+    # a person's approval. apply is Turf's approval point (its plan_digest
+    # names the plan approved); taint and untaint mark state; delete removes a
+    # workspace.
+    - mcp:
+        server:
+          kind: RemoteMCPServer
+          name: turf
+        tools:
+          - apply
+          - taint
+          - untaint
+          - delete
+        requireApproval: true
+    # kagent's Kubernetes and Helm tools, read-only.
+    - mcp:
+        server:
+          kind: RemoteMCPServer
+          name: kagent-tool-server
+        tools:
+          - k8s_get_resources
+          - k8s_describe_resource
+          - k8s_get_resource_yaml
+          - k8s_get_pod_logs
+          - k8s_get_events
+          - k8s_get_available_api_resources
+          - helm_list_releases
+          - helm_get_release
+    # The OpenTofu Registry: every tool it offers.
+    - mcp:
+        server:
+          kind: RemoteMCPServer
+          name: opentofu-registry
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: turf
+  namespace: kagent
+spec:
+  template:
+    ref:
+      name: turf
+  harnessRef:
+    name: turf

@@ -1,0 +1,18 @@
+# The model the agent runs on. The kagent-anthropic Secret is the one
+# `kagent install` creates from ANTHROPIC_API_KEY (setup/kagent.sh). Like the
+# MCP server's token, the key never enters the agent's sandbox: the egress
+# gateway attaches it to requests bound for the provider.
+apiVersion: api.kagent.dev/v1alpha3
+kind: ModelConfig
+metadata:
+  name: turf-model
+  namespace: kagent
+spec:
+  provider: Anthropic
+  model: claude-sonnet-5-5
+  apiKeySecret: kagent-anthropic
+  apiKeySecretKey: ANTHROPIC_API_KEY
+  anthropic:
+    # A Turf session repeats a long prefix on every call (the tools, the
+    # system prompt, the deployment skill): bill it as a cache read.
+    promptCaching: true

@@ -1,0 +1,24 @@
+# turf-cli-config: the OpenTofu CLI configuration every Turf pod reads, mounted
+# at /turf/cli and named by TF_CLI_CONFIG_FILE in mcp-server.yaml and
+# engine.yaml. Its provider_installation block says where provider plugins come
+# from: the server's init installs and locks them from it, and the engine
+# installs from it when it plans, so the two must read the same block. Each
+# reads the file once, at start.
+#
+# As shipped the block is direct {}, the registry. For a cluster that reaches no
+# registry, add a filesystem_mirror (an image volume at the same path in every
+# pod), a network_mirror (https only) or an oci_mirror, naming what it serves
+# with include and excluding the same from direct
+# (https://opentofu.org/docs/cli/config/config-file/#provider-installation).
+# Keep secrets out of this ConfigMap: a registry token is TF_TOKEN_<host>, from
+# a Secret, on every pod.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: turf-cli-config
+  namespace: turf
+data:
+  turf.tfrc: |
+    provider_installation {
+      direct {}
+    }

@@ -1,0 +1,81 @@
+# Who may reach the MCP server and the engine. restate-server has its own
+# policies, which the operator writes from restate-cluster.yaml's
+# security.networkPeers; these two cover the rest of the namespace. Each
+# selects one part's pods, so nothing else in the namespace is affected.
+#
+# Policies are enforced by the cluster's network plugin, not by Kubernetes: on
+# a CNI that ignores NetworkPolicy they are accepted and do nothing (kind's
+# kindnet enforces them). They are layer 3/4 only, which is why the MCP server
+# still checks the bearer token and the engine still checks that restate-server
+# signed every request.
+#
+# The selectors name kagent 1.0's pods: its controller, which connects to list
+# the server's tools, and Agent Substrate's egress gateway in ate-system, which
+# makes every connection an agent's sandbox makes (the sandbox never dials the
+# server itself). Check them against the cluster when kagent is upgraded:
+#   kubectl get pods -n kagent -l app.kubernetes.io/component=controller
+#   kubectl get pods -n ate-system -l app=atenet-egress
+
+# turf-mcp-server: kagent's controller and egress gateway, on 3000. Its egress
+# stays open: it reaches the provider registry, restate-server's ingress and
+# the API server (the state backend).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: turf-mcp-server
+  namespace: turf
+spec:
+  podSelector:
+    matchLabels:
+      app: turf-mcp-server
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kagent
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kagent
+              app.kubernetes.io/component: controller
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ate-system
+          podSelector:
+            matchLabels:
+              app: atenet-egress
+      ports:
+        - port: 3000
+---
+# turf-engine: Knative's data path alone. restate-server calls the engine at
+# its Route's cluster-local address, Kourier's internal gateway, which passes
+# the request to Knative's activator (while the engine scales from zero) or to
+# a pod's queue-proxy; the autoscaler reads each queue-proxy's metrics. Its
+# egress stays open: provider plugins run here and reach whatever APIs and
+# registries a configuration names.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: turf-engine
+  namespace: turf
+spec:
+  podSelector:
+    matchLabels:
+      app: turf-engine
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kourier-system
+          podSelector:
+            matchLabels:
+              app: 3scale-kourier-gateway
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: knative-serving
+          podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values: [activator, autoscaler]

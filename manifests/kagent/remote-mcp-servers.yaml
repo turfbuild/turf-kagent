@@ -1,0 +1,48 @@
+# The MCP servers the agent's tools come from. kagent's controller connects to
+# each one itself to list its tools (status.discoveredTools), and again every
+# few minutes; an agent's sandbox reaches them only through Agent Substrate's
+# egress gateway, which allows the URLs named here and nothing else.
+#
+# turf: the Turf MCP server in the turf namespace. Every request carries
+# "Authorization: Bearer <token>". The value comes from the turf-mcp-auth
+# Secret in this namespace (setup/secrets.sh), which holds the whole header
+# value, "Bearer " included: kagent sends it as it is. The controller reads the
+# Secret for discovery; for an agent, the sandbox sends a placeholder and the
+# gateway swaps the real value in on the way out, so the token never enters the
+# sandbox.
+apiVersion: api.kagent.dev/v1alpha3
+kind: RemoteMCPServer
+metadata:
+  name: turf
+  namespace: kagent
+spec:
+  description: >-
+    Turf: plan, approve and apply OpenTofu configurations with durable
+    execution, state in the cluster.
+  url: http://turf-mcp-server.turf.svc.cluster.local:3000/mcp
+  protocol: STREAMABLE_HTTP
+  # A call gets 30 seconds; the server answers within its --deadline (25s,
+  # manifests/turf/mcp-server.yaml) with where the convergence stands, and the
+  # agent calls again. Raise both together.
+  timeout: 30s
+  sseReadTimeout: 5m0s
+  headersFrom:
+    - name: Authorization
+      valueFrom:
+        type: Secret
+        name: turf-mcp-auth
+        key: authorization
+---
+# The OpenTofu Registry's public MCP server: provider, module and resource
+# documentation, for explaining a plan.
+apiVersion: api.kagent.dev/v1alpha3
+kind: RemoteMCPServer
+metadata:
+  name: opentofu-registry
+  namespace: kagent
+spec:
+  description: OpenTofu Registry MCP server for searching providers, modules, and resource documentation
+  url: https://mcp.opentofu.org/mcp
+  protocol: STREAMABLE_HTTP
+  timeout: 30s
+  sseReadTimeout: 5m0s

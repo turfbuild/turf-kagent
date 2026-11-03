@@ -1,0 +1,75 @@
+# restate-server, the durable-execution server Turf's engine runs on, managed
+# by the Restate operator (setup/restate-operator.sh). The operator runs it as
+# a StatefulSet in the namespace named after the cluster, provisions it, and
+# puts a default-deny NetworkPolicy around it: only the peers listed under
+# security.networkPeers reach its ports, and it dials only DNS, the public
+# internet, and the pods it is told about.
+#
+# The engine needs restate-server 1.7.7 or later with flow control on (1.8
+# builds it in) and is tested against 1.8.1. PREFLIGHT_SIGNAL_RECORDING keeps a
+# signal sent to an invocation that has not started yet (restate#5587); it is
+# one-way, so this node's data cannot go back to a release before 1.8.1. The
+# partition count is fixed when the node first provisions.
+apiVersion: restate.dev/v1
+kind: RestateCluster
+metadata:
+  name: turf
+spec:
+  cluster:
+    autoProvision: true
+  compute:
+    image: docker.io/restatedev/restate:1.8.1
+    replicas: 1
+    env:
+      - name: RESTATE_EXPERIMENTAL_ENABLE_PREFLIGHT_SIGNAL_RECORDING
+        value: "true"
+  storage:
+    storageRequestBytes: 10737418240 # 10 GiB
+  # A provider's apply is one step of the engine's, held open on one HTTP/2
+  # stream for as long as the cloud API takes. The invoker aborts a step after
+  # abort-timeout (10 minutes by default); 30 leaves room for a slow node pool
+  # or database. inactivity-timeout stays at its default, so an invocation
+  # that is only waiting on the agent still suspends. The engine's revision
+  # timeout (engine.yaml, timeoutSeconds) is longer than this one.
+  config: |
+    # The operator provisions the cluster (cluster.autoProvision), so the node
+    # must not provision itself.
+    auto-provision = false
+    default-num-partitions = 8
+
+    [worker.invoker]
+    abort-timeout = "30m"
+  security:
+    # Every request restate-server sends the engine is signed with this key;
+    # the engine serves nothing it did not sign (TURF_ENGINE_IDENTITY_KEYS in
+    # engine.yaml holds the public half). setup/secrets.sh creates the Secret.
+    requestSigningPrivateKey:
+      version: v1
+      secret:
+        secretName: turf-engine-identity
+        key: identity.pem
+    networkPeers:
+      # The ingress (8080): the MCP server, nothing else.
+      ingress:
+        - podSelector:
+            matchLabels:
+              app: turf-mcp-server
+      # The admin API (9070): the engine's startup version check. The
+      # operator's own access, for registering the engine, is on by default
+      # (allowOperatorAccessToAdmin).
+      admin:
+        - podSelector:
+            matchLabels:
+              app: turf-engine
+    # restate-server reaches the engine through the Knative Route's
+    # cluster-local address, which is Kourier's internal gateway. The engine's
+    # pods carry allow.restate.dev/turf (the operator adds it), but the
+    # gateway's do not, so it is named here.
+    networkEgressRules:
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: kourier-system
+            podSelector:
+              matchLabels:
+                app: 3scale-kourier-gateway
