@@ -1,0 +1,87 @@
+# The Turf console: every workspace's convergences, rounds and approvals,
+# read-only, served by turf-ui from the same image as the MCP server and the
+# engine. It reads restate-server's ingress and nothing else; it runs no
+# provider and holds no state, so it may be restarted or left out and the
+# engine does not notice.
+#
+# It is not exposed. Nothing in the cluster may reach it (network-policies.yaml
+# admits no ingress), so the way in is a port-forward, which the API server
+# carries past the policy:
+#   kubectl port-forward -n turf svc/turf-console 9081
+# Then, once per browser, sign in with the token in the turf-console-auth
+# Secret (setup/secrets.sh):
+#   http://localhost:9081/login?token=$(cat .secrets/console-token)
+# The MCP server's results carry a console_url for every round at that
+# address (TURF_CONSOLE_URL in mcp-server.yaml), so an approval card's link
+# opens on the round whose plan it is.
+apiVersion: v1
+kind: Service
+metadata:
+  name: turf-console
+  namespace: turf
+spec:
+  selector:
+    app: turf-console
+  ports:
+    - name: http
+      port: 9081
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: turf-console
+  namespace: turf
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: turf-console
+  template:
+    metadata:
+      labels:
+        app: turf-console
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: turf-ui
+          # The same image as mcp-server.yaml and engine.yaml: keep the three
+          # tags equal.
+          image: ghcr.io/turfbuild/turf-mcp-server:v1.4.0
+          command: ["/turf-ui"]
+          args:
+            # Off loopback, which turf-ui allows because a token gates it
+            # (TURF_CONSOLE_AUTH_TOKEN below): every read needs the cookie
+            # /login sets, or the token as a bearer header. Only /api/health
+            # answers without one.
+            - --addr=0.0.0.0:9081
+            - --ingress-addr=http://restate.turf.svc:8080
+            # Must match the engine's (engine.yaml runs it with its default, on).
+            - --scopes=on
+          env:
+            - name: TURF_CONSOLE_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: turf-console-auth
+                  key: token
+          ports:
+            - name: http
+              containerPort: 9081
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            runAsUser: 1000
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault

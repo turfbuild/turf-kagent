@@ -73,8 +73,8 @@ spec:
       serviceAccountName: turf-mcp-server
       containers:
         - name: turf-mcp-server
-          # The same image as engine.yaml: keep the two tags equal.
-          image: ghcr.io/turfbuild/turf-mcp-server:v1.3.0
+          # The same image as engine.yaml and console.yaml: keep the three tags equal.
+          image: ghcr.io/turfbuild/turf-mcp-server:v1.4.0
           args:
             - --transport=http
             - --addr=:3000
@@ -94,6 +94,12 @@ spec:
             # turf-engine registered behind it by the operator.
             - name: TURF_RESTATE_URL
               value: http://restate.turf.svc:8080
+            # Where the console is reached from a browser: through the
+            # port-forward console.yaml describes. Every result then carries
+            # a console_url for its round, and an approval card's link opens
+            # on the plan it is about.
+            - name: TURF_CONSOLE_URL
+              value: http://localhost:9081
             # Where init's module install goes, as tofu's TF_DATA_DIR: the
             # configuration at /turf/config is read-only.
             - name: TF_DATA_DIR

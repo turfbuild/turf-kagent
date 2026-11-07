@@ -28,7 +28,7 @@ ns turf    turf-mcp-server :3000/mcp ──► restate-server (RestateCluster "t
 |---|---|---|
 | `kagent` | the controller and UI; the WorkerPool the agent's sandbox runs on; the agent's `Harness`, `AgentTemplate` and `Agent`; a `ModelConfig` for Anthropic; `RemoteMCPServer`s for Turf, the OpenTofu Registry and a read-only Kubernetes tool server | [`manifests/kagent/`](manifests/kagent) |
 | `ate-system` | Agent Substrate's control plane, and the egress gateway every connection from the sandbox goes through | `kagent install` |
-| `turf` | everything Turf: restate-server, the MCP server, the engine, and the state | [`manifests/turf/`](manifests/turf) |
+| `turf` | everything Turf: restate-server, the MCP server, the engine, the console, and the state | [`manifests/turf/`](manifests/turf) |
 | `knative-serving`, `kourier-system` | Knative Serving and its Kourier gateway | [`setup/knative.sh`](setup/knative.sh) |
 | `restate-operator` | the Restate operator | [`setup/restate-operator.sh`](setup/restate-operator.sh) |
 
@@ -48,6 +48,14 @@ Route with restate-server. Knative scales the pods with the work in flight: `min
 minor release gets a new `knative.tag`, which the operator registers as a new deployment while
 the old one finishes what it started.
 
+**The console** ([`console.yaml`](manifests/turf/console.yaml)) is Turf's read-only web view of
+every workspace: its convergences, each round's plan, approval point and apply, who approved
+what, and the lanes as they ran. It is `turf-ui` from the same image, reading restate-server's
+ingress and nothing else. Nothing in the cluster can reach it; you port-forward to it and sign
+in once with its token. Every result the MCP server hands the agent carries a `console_url`
+for its round (`TURF_CONSOLE_URL`), so the agent's message with a plan links to the round at its
+approval point.
+
 **restate-server** ([`restate-cluster.yaml`](manifests/turf/restate-cluster.yaml)) is a
 `RestateCluster`, one node with its data on a PersistentVolume, provisioned by the operator.
 
@@ -58,7 +66,7 @@ it does not edit it. A change is a new image version.
 
 ## Who may talk to whom
 
-Three controls, each independent of the others.
+Four controls, each independent of the others.
 
 1. **A bearer token, kagent → the MCP server.** The server answers only requests carrying
    `Authorization: Bearer <token>` (`TURF_MCP_AUTH_TOKEN`), and 401 to anything else. kagent
@@ -74,15 +82,20 @@ Three controls, each independent of the others.
    (`security.requestSigningPrivateKey`); the engine serves nothing that key did not sign
    (`TURF_ENGINE_IDENTITY_KEYS`, the public half).
 3. **Network policy.** The operator puts a default-deny policy around restate-server and
-   admits only what `security.networkPeers` names: the MCP server on the ingress, the engine
-   on the admin API (its startup version check). Ours
+   admits only what `security.networkPeers` names: the MCP server and the console on the
+   ingress, the engine on the admin API (its startup version check). Ours
    ([`network-policies.yaml`](manifests/turf/network-policies.yaml)) admit kagent's controller
-   (tool discovery) and egress gateway to the MCP server and the Kubernetes tool server, and
-   only Knative's data path to the engine's pods. Agent Substrate's own egress policy lets the
-   agent's sandbox reach the model, its MCP servers and nothing else. Knative's data path is
-   shared, though: Kourier's internal gateway serves every Knative service in the cluster, so
-   any pod can reach the engine through its Route, and there the signature (control 2) is what
-   refuses it.
+   (tool discovery) and egress gateway to the MCP server and the Kubernetes tool server, only
+   Knative's data path to the engine's pods, and nothing at all to the console. Agent
+   Substrate's own egress policy lets the agent's sandbox reach the model, its MCP servers and
+   nothing else. Knative's data path is shared, though: Kourier's internal gateway serves every
+   Knative service in the cluster, so any pod can reach the engine through its Route, and there
+   the signature (control 2) is what refuses it.
+4. **A token, you → the console.** The console answers no read without the token in
+   `turf-console-auth` (`TURF_CONSOLE_AUTH_TOKEN`): a browser gives it once at
+   `/login?token=…` and keeps a cookie, a program sends it as a bearer header, and only
+   `/api/health` answers without it. A port-forward is the only way to the pod, and the token
+   is what its reader then has to show. The links Turf hands the agent never carry it.
 
 Checked from a pod in the cluster with no business there (`kubectl run stray
 --image=curlimages/curl …`):
@@ -92,6 +105,7 @@ curl -m 5 http://restate.turf.svc:8080/restate/health                   # timed 
 curl -m 5 http://restate.turf.svc:9070/health                           # timed out
 curl -m 5 http://turf-mcp-server.turf.svc:3000/mcp                      # timed out
 curl -m 5 http://turf-k8s-reader.kagent.svc:8084/mcp                    # timed out
+curl -m 5 http://turf-console.turf.svc:9081/api/health                  # timed out
 curl -m 5 http://<engine pod IP>:8012/                                  # timed out
 curl --http2-prior-knowledge http://turf-engine-v1-3.turf.svc.cluster.local/discover   # 401
 ```
@@ -103,6 +117,12 @@ and through a port-forward to the MCP server, without the token:
 
 ```
 curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:3000/mcp   # 401
+```
+
+and to the console, without its cookie:
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:9081/config.json       # 401
 ```
 
 ## Approvals
@@ -150,6 +170,13 @@ In another, open the kagent UI and pick the agent `turf`:
 kubectl port-forward -n kagent svc/kagent-ui 8082:8080      # http://localhost:8082
 ```
 
+And in a third, the Turf console, signed in once with its token:
+
+```sh
+kubectl port-forward -n turf svc/turf-console 9081
+open "http://localhost:9081/login?token=$(cat .secrets/console-token)"
+```
+
 1. **"Deploy the mounted configuration as a stack called demo."** The agent loads Turf's
    deployment skill, runs `init` on `/turf/config`, opens workspace `demo` on the kubernetes
    backend, starts `up`, plans, and stops at the approval point. From a run on kind:
@@ -157,8 +184,10 @@ kubectl port-forward -n kagent svc/kagent-ui 8082:8080      # http://localhost:8
    > Plan: 2 to add, 0 to change, 0 to destroy. It creates the namespace `turf-greeting` and
    > the ConfigMap `greeting` in it. Nothing is risky and there are no invocations.
 
-   The UI shows an approval card for `apply`, with the convergence and the plan digest. An
-   engine pod appears in the first terminal as soon as the agent opens the workspace. Approve:
+   The UI shows an approval card for `apply`, with the convergence and the plan digest, and
+   the agent's message above it links to the round in the console, at its approval point with
+   that digest. An engine pod appears in the first terminal as soon as the agent opens the
+   workspace. Approve:
 
    > I deployed the `demo` stack, and it converged in one round. Apply complete! Resources: 2
    > added, 0 changed, 0 destroyed. […] The state is in the Secret `tfstate-demo-turf` in the
@@ -216,8 +245,9 @@ claude mcp add --transport http kagent http://localhost:8083/mcp
   for its startup check; a mirror narrows the first.
 - **The agent does not always write the plan out before `apply`.** It is told to, and often
   does, but on kagent 1.0.0-rc1 with Claude Sonnet 5.5 it sometimes calls `apply` right after
-  `show`. The card then shows only the digest: reject it and ask the agent for the plan, or
-  read the plan in the session's `show` result if your client shows tool results.
+  `show`. The card then shows only the digest: open the round in the console (the link in the
+  agent's message; its Plan tab is the plan), read the plan in the session's `show` result if
+  your client shows tool results, or reject the card and ask the agent for the plan.
 - **Every authenticated client is one principal.** The token says that a caller may use the
   server, not which caller it is. kagent can mint a per-Actor JWT instead (`actorJwt` on the
   `RemoteMCPServer`), once the server can check one.
@@ -237,7 +267,7 @@ claude mcp add --transport http kagent http://localhost:8083/mcp
   same tag with a new image updates in place, which Restate allows only for a change compatible
   with invocations in flight.
 - **Versions.** kagent 1.0.0-rc1, Knative Serving 1.24.0 with Kourier, the Restate operator
-  3.2.0, restate-server 1.8.1, Turf 1.3.0, on kind with Kubernetes 1.37.0.
+  3.2.0, restate-server 1.8.1, Turf 1.4.0, on kind with Kubernetes 1.37.0.
 
 ## Clean up
 

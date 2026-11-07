@@ -1,6 +1,6 @@
-# Who may reach the MCP server and the engine. restate-server has its own
-# policies, which the operator writes from restate-cluster.yaml's
-# security.networkPeers; these two cover the rest of the namespace. Each
+# Who may reach the MCP server, the engine and the console. restate-server has
+# its own policies, which the operator writes from restate-cluster.yaml's
+# security.networkPeers; these three cover the rest of the namespace. Each
 # selects one part's pods, so nothing else in the namespace is affected.
 #
 # Policies are enforced by the cluster's network plugin, not by Kubernetes: on
@@ -79,3 +79,21 @@ spec:
               - key: app
                 operator: In
                 values: [activator, autoscaler]
+---
+# turf-console: nothing in the cluster. The way in is kubectl port-forward,
+# which the API server and the kubelet carry straight into the pod, past the
+# network plugin, so a policy that admits no ingress leaves it reachable
+# that way and no other. The token (TURF_CONSOLE_AUTH_TOKEN) is what the
+# port-forward's reader then has to present. Its egress stays open: it reads
+# restate-server's ingress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: turf-console
+  namespace: turf
+spec:
+  podSelector:
+    matchLabels:
+      app: turf-console
+  policyTypes: [Ingress]
+  ingress: []
