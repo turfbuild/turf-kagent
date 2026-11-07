@@ -99,7 +99,7 @@ spec:
             # a console_url for its round, and an approval card's link opens
             # on the plan it is about.
             - name: TURF_CONSOLE_URL
-              value: http://localhost:9081
+              value: http://localhost:8873
             # Where init's module install goes, as tofu's TF_DATA_DIR: the
             # configuration at /turf/config is read-only.
             - name: TF_DATA_DIR

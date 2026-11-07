@@ -105,7 +105,7 @@ curl -m 5 http://restate.turf.svc:8080/restate/health                   # timed 
 curl -m 5 http://restate.turf.svc:9070/health                           # timed out
 curl -m 5 http://turf-mcp-server.turf.svc:3000/mcp                      # timed out
 curl -m 5 http://turf-k8s-reader.kagent.svc:8084/mcp                    # timed out
-curl -m 5 http://turf-console.turf.svc:9081/api/health                  # timed out
+curl -m 5 http://turf-console.turf.svc:8873/api/health                  # timed out
 curl -m 5 http://<engine pod IP>:8012/                                  # timed out
 curl --http2-prior-knowledge http://turf-engine-v1-3.turf.svc.cluster.local/discover   # 401
 ```
@@ -122,7 +122,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:3000/mcp   # 4
 and to the console, without its cookie:
 
 ```sh
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:9081/config.json       # 401
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8873/config.json       # 401
 ```
 
 ## Approvals
@@ -173,8 +173,8 @@ kubectl port-forward -n kagent svc/kagent-ui 8082:8080      # http://localhost:8
 And in a third, the Turf console, signed in once with its token:
 
 ```sh
-kubectl port-forward -n turf svc/turf-console 9081
-open "http://localhost:9081/login?token=$(cat .secrets/console-token)"
+kubectl port-forward -n turf svc/turf-console 8873
+open "http://localhost:8873/login?token=$(cat .secrets/console-token)"
 ```
 
 1. **"Deploy the mounted configuration as a stack called demo."** The agent loads Turf's

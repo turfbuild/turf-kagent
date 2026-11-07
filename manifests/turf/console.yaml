@@ -7,10 +7,10 @@
 # It is not exposed. Nothing in the cluster may reach it (network-policies.yaml
 # admits no ingress), so the way in is a port-forward, which the API server
 # carries past the policy:
-#   kubectl port-forward -n turf svc/turf-console 9081
+#   kubectl port-forward -n turf svc/turf-console 8873
 # Then, once per browser, sign in with the token in the turf-console-auth
 # Secret (setup/secrets.sh):
-#   http://localhost:9081/login?token=$(cat .secrets/console-token)
+#   http://localhost:8873/login?token=$(cat .secrets/console-token)
 # The MCP server's results carry a console_url for every round at that
 # address (TURF_CONSOLE_URL in mcp-server.yaml), so an approval card's link
 # opens on the round whose plan it is.
@@ -24,7 +24,7 @@ spec:
     app: turf-console
   ports:
     - name: http
-      port: 9081
+      port: 8873
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -53,7 +53,7 @@ spec:
             # (TURF_CONSOLE_AUTH_TOKEN below): every read needs the cookie
             # /login sets, or the token as a bearer header. Only /api/health
             # answers without one.
-            - --addr=0.0.0.0:9081
+            - --addr=0.0.0.0:8873
             - --ingress-addr=http://restate.turf.svc:8080
             # Must match the engine's (engine.yaml runs it with its default, on).
             - --scopes=on
@@ -65,7 +65,7 @@ spec:
                   key: token
           ports:
             - name: http
-              containerPort: 9081
+              containerPort: 8873
           readinessProbe:
             httpGet:
               path: /api/health
