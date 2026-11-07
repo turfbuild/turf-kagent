@@ -134,9 +134,14 @@ infrastructure or state, `apply`, `taint`, `untaint` and `delete`, are bound wit
 `requireApproval: true`, so each one pauses the agent until a person approves it in the kagent
 UI. `apply` carries the digest of the plan it applies, so the approval covers exactly that plan,
 and nothing else. The card shows the call's arguments, the convergence and the digest; the plan
-itself is the `show` call just above it in the session (see Notes). A turf action that asks the
-user something reaches them through kagent's `ask_user`. The other two bindings are read-only
-Kubernetes tools and the OpenTofu Registry's documentation tools, each named.
+itself is the `show` call just above it in the session (see Notes).
+
+The configuration also declares a **turf action**: a step of the apply that the agent carries
+out instead of a provider. After the Job is created, the apply pauses, and the agent watches the
+Job with its read-only Kubernetes tools and reports its result through `apply` again, which is
+one more card. A turf action that asks the user something reaches them through kagent's
+`ask_user`. The other two bindings are read-only Kubernetes tools and the OpenTofu Registry's
+documentation tools, each named.
 
 ## Run it
 
@@ -179,10 +184,18 @@ open "http://localhost:8873/login?token=$(cat .secrets/console-token)"
 
 1. **"Deploy the mounted configuration as a stack called demo."** The agent loads Turf's
    deployment skill, runs `init` on `/turf/config`, opens workspace `demo` on the kubernetes
-   backend, starts `up`, plans, and stops at the approval point. From a run on kind:
+   backend, starts `up`, plans, and stops at the approval point. The UI shows an approval card
+   for `apply`, with the convergence and the plan digest (3 to add: the namespace, the
+   ConfigMap and the Job). Engine pods appear in the first terminal as soon as the agent opens
+   the workspace. Approve, and the apply pauses at the turf action: the agent checks the Job
+   and its pod with its Kubernetes tools and reports back through `apply`, a second card.
+   Approve that too. From a run on kind:
 
-   > Plan: 2 to add, 0 to change, 0 to destroy. It creates the namespace `turf-greeting` and
-   > the ConfigMap `greeting` in it. Nothing is risky and there are no invocations.
+   > The `demo` stack is deployed and converged. Apply complete! Resources: 3 added, 0 changed,
+   > 0 destroyed. […] **Turf action:** the configuration has a step that waits for the Job, and
+   > the apply paused there. I checked the Job myself. It had `succeeded: 1` and condition
+   > `Complete`, and its pod `greet-tb9jv` was `Completed`. The pod's log line was `Hello from
+   > a configuration image.`, and I reported that back as a success.
 
    The UI shows an approval card for `apply`, with the convergence and the plan digest, and
    the agent's message above it links to the round in the console, at its approval point with
@@ -193,15 +206,20 @@ open "http://localhost:8873/login?token=$(cat .secrets/console-token)"
    > added, 0 changed, 0 destroyed. […] The state is in the Secret `tfstate-demo-turf` in the
    > `turf` namespace.
 
-   The engine pod goes away a minute or so after the round ends.
+   The engine pods go away a minute or so after the round ends.
 2. **"What stacks exist, and what is in demo?"** Read-only, no pause: the agent lists the
    stacks' Leases in `turf` with its Kubernetes tools, then reads each stack's state through
    Turf. Ask it for a Secret and it cannot: the tool server's role has no access to them.
 3. **"Tear down the demo stack."** Another approval card, this time for a destroy plan. Reject
-   it and nothing is applied: the agent cancels the convergence and asks what you want instead.
-   Ask again and approve, and the namespace is gone.
+   it with a reason and nothing is applied: the agent cancels the convergence, which frees the
+   stack's lock, and repeats your reason back. Ask again and approve, and the namespace is gone.
 4. **"Deploy it as a stack called team-a, but ask me which namespace and greeting to use
    first."** The agent asks both questions through `ask_user` before it plans.
+5. **Four at once.** Open four sessions and ask each for its own stack (`team-a` to `team-d`,
+   each with `namespace` set to its name). Four convergences run side by side, the engine
+   spreads them over pods (`knative.target` and `maxScale` in
+   [`engine.yaml`](manifests/turf/engine.yaml)), and each session gets its own cards. The
+   cluster is one pool of provider operations for everyone who asks.
 
 Restate's UI shows each round's invocations: `kubectl port-forward -n turf svc/restate 9070`, then
 http://localhost:9070.
@@ -239,21 +257,20 @@ claude mcp add --transport http kagent http://localhost:8083/mcp
   scope `create` and `list` by name. Everything Turf shares one namespace here; to narrow it,
   keep the state in a namespace of its own (`backend_config.namespace` in the agent's prompt)
   and move the Role there.
-- **The engine's ClusterRole is the demo's**: namespaces and ConfigMaps. Widen it to what your
+- **The engine's ClusterRole is the demo's**: namespaces, ConfigMaps and Jobs. Widen it to what your
   configurations declare. The engine also runs provider plugins from the registry
   ([`cli-config.yaml`](manifests/turf/cli-config.yaml)) and reaches restate-server's admin API
   for its startup check; a mirror narrows the first.
 - **The agent does not always write the plan out before `apply`.** It is told to, and often
-  does, but on kagent 1.0.0-rc1 with Claude Sonnet 5.5 it sometimes calls `apply` right after
+  does, but on kagent 1.0.0-rc3 with Claude Sonnet 5.5 it sometimes calls `apply` right after
   `show`. The card then shows only the digest: open the round in the console (the link in the
   agent's message; its Plan tab is the plan), read the plan in the session's `show` result if
   your client shows tool results, or reject the card and ask the agent for the plan.
 - **Every authenticated client is one principal.** The token says that a caller may use the
   server, not which caller it is. kagent can mint a per-Actor JWT instead (`actorJwt` on the
   `RemoteMCPServer`), once the server can check one.
-- **A rejection's reason does not reach the agent** on kagent 1.0.0-rc1's `kagent` harness:
-  it learns that a call was rejected, not why. The system prompt has it cancel the convergence
-  and ask.
+- **A rejection's reason reaches the agent** on kagent 1.0.0-rc3 (on rc1 it did not): the
+  agent cancels the convergence, which frees the stack's lock, and answers with the reason.
 - **Session snapshots** go to the object store kagent installs (`snapshotPolicy` in
   [`harness.yaml`](manifests/kagent/harness.yaml)). They hold what the session holds: the
   plans and state the agent read, not the token or the model key.
@@ -266,7 +283,7 @@ claude mcp add --transport http kagent http://localhost:8083/mcp
 - **Keep `knative.tag` and the image together.** A new tag is a new Restate deployment; the
   same tag with a new image updates in place, which Restate allows only for a change compatible
   with invocations in flight.
-- **Versions.** kagent 1.0.0-rc1, Knative Serving 1.24.0 with Kourier, the Restate operator
+- **Versions.** kagent 1.0.0-rc3, Knative Serving 1.24.0 with Kourier, the Restate operator
   3.2.0, restate-server 1.8.1, Turf 1.4.0, on kind with Kubernetes 1.37.0.
 
 ## Clean up

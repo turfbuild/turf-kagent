@@ -62,11 +62,11 @@ spec:
     # image.
     tag: v1-4
     minScale: 0
-    maxScale: 4
+    maxScale: 8
     # Concurrent requests per pod before Knative adds one. A round's steps
     # are many short requests and a few long ones (a provider's apply); a
     # low target makes several stacks converging at once spread over pods.
-    target: 2
+    target: 4
   restate:
     register:
       cluster: turf
