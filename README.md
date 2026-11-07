@@ -141,11 +141,11 @@ Kubernetes tools and the OpenTofu Registry's documentation tools, each named.
 ## Run it
 
 You need Docker, [kind](https://kind.sigs.k8s.io) v0.32 or later, kubectl, Helm 3 or later, the
-kagent CLI 1.0.0-rc1, and an Anthropic API key. kagent 1.0 needs Kubernetes 1.37.
+kagent CLI 1.0.0-rc3, and an Anthropic API key. kagent 1.0 needs Kubernetes 1.37.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/kagent-dev/kagent/refs/heads/main/scripts/get-kagent \
-  | bash -s -- --version v1.0.0-rc1
+  | bash -s -- --version v1.0.0-rc3
 kind create cluster --name turf-kagent --image kindest/node:v1.37.0
 export ANTHROPIC_API_KEY=...
 ./setup/up.sh
