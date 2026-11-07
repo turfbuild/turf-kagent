@@ -23,6 +23,7 @@ kubectl wait --for=condition=Ready --timeout=300s restatecluster/turf
 kubectl rollout status statefulset/restate -n turf --timeout=300s
 kubectl apply -k "$here/manifests/turf"
 kubectl wait --for=condition=Available --timeout=300s deployment/turf-mcp-server -n turf
+kubectl wait --for=condition=Available --timeout=300s deployment/turf-console -n turf
 kubectl wait --for=condition=Ready --timeout=300s restatedeployment/turf-engine -n turf
 
 # The read-only Kubernetes tool server first, so kagent finds its tools when

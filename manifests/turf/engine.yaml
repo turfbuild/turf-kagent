@@ -57,7 +57,7 @@ spec:
     # Revision under the same deployment), which Restate allows only for a
     # change compatible with invocations in flight: change the tag with the
     # image.
-    tag: v1-3
+    tag: v1-4
     minScale: 0
     maxScale: 4
     # Concurrent requests per pod before Knative adds one. A round's steps
@@ -79,8 +79,8 @@ spec:
       timeoutSeconds: 3600
       containers:
         - name: turf-engine
-          # The same image as mcp-server.yaml: keep the two tags equal.
-          image: ghcr.io/turfbuild/turf-mcp-server:v1.3.0
+          # The same image as mcp-server.yaml and console.yaml: keep the three tags equal.
+          image: ghcr.io/turfbuild/turf-mcp-server:v1.4.0
           command: ["/turf-engine"]
           args:
             - --addr=0.0.0.0:9080
