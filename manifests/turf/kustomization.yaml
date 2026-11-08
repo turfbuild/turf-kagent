@@ -6,4 +6,5 @@ resources:
   - cli-config.yaml
   - mcp-server.yaml
   - engine.yaml
+  - console.yaml
   - network-policies.yaml

@@ -49,11 +49,14 @@ spec:
         secretName: turf-engine-identity
         key: identity.pem
     networkPeers:
-      # The ingress (8080): the MCP server, nothing else.
+      # The ingress (8080): the MCP server, and the console's reads.
       ingress:
         - podSelector:
             matchLabels:
               app: turf-mcp-server
+        - podSelector:
+            matchLabels:
+              app: turf-console
       # The admin API (9070): the engine's startup version check. The
       # operator's own access, for registering the engine, is on by default
       # (allowOperatorAccessToAdmin).
