@@ -186,8 +186,9 @@ open "http://localhost:8873/login?token=$(cat .secrets/console-token)"
    deployment skill, runs `init` on `/turf/config`, opens workspace `demo` on the kubernetes
    backend, starts `up`, plans, and stops at the approval point. The UI shows an approval card
    for `apply`, with the convergence and the plan digest (3 to add: the namespace, the
-   ConfigMap and the Job). Engine pods appear in the first terminal as soon as the agent opens
-   the workspace. Approve, and the apply pauses at the turf action: the agent checks the Job
+   ConfigMap and the Job), and the agent's message above it links to the round in the console,
+   at its approval point with that digest. Engine pods appear in the first terminal as soon as
+   the agent opens the workspace. Approve, and the apply pauses at the turf action: the agent checks the Job
    and its pod with its Kubernetes tools and reports back through `apply`, a second card.
    Approve that too. From a run on kind:
 
@@ -195,16 +196,8 @@ open "http://localhost:8873/login?token=$(cat .secrets/console-token)"
    > 0 destroyed. […] **Turf action:** the configuration has a step that waits for the Job, and
    > the apply paused there. I checked the Job myself. It had `succeeded: 1` and condition
    > `Complete`, and its pod `greet-tb9jv` was `Completed`. The pod's log line was `Hello from
-   > a configuration image.`, and I reported that back as a success.
-
-   The UI shows an approval card for `apply`, with the convergence and the plan digest, and
-   the agent's message above it links to the round in the console, at its approval point with
-   that digest. An engine pod appears in the first terminal as soon as the agent opens the
-   workspace. Approve:
-
-   > I deployed the `demo` stack, and it converged in one round. Apply complete! Resources: 2
-   > added, 0 changed, 0 destroyed. […] The state is in the Secret `tfstate-demo-turf` in the
-   > `turf` namespace.
+   > a configuration image.`, and I reported that back as a success. The state is in the
+   > Secret `tfstate-demo-turf` in the `turf` namespace.
 
    The engine pods go away a minute or so after the round ends.
 2. **"What stacks exist, and what is in demo?"** Read-only, no pause: the agent lists the
