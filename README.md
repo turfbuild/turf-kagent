@@ -188,9 +188,9 @@ open "http://localhost:8873/login?token=$(cat .secrets/console-token)"
    for `apply`, with the convergence and the plan digest (3 to add: the namespace, the
    ConfigMap and the Job), and the agent's message above it links to the round in the console,
    at its approval point with that digest. Engine pods appear in the first terminal as soon as
-   the agent opens the workspace. Approve, and the apply pauses at the turf action: the agent checks the Job
-   and its pod with its Kubernetes tools and reports back through `apply`, a second card.
-   Approve that too. From a run on kind:
+   the agent opens the workspace. Approve, and the apply pauses at the turf action: the agent
+   checks the Job and its pod with its Kubernetes tools and reports back through `apply`, a
+   second card. Approve that too. From a run on kind:
 
    > The `demo` stack is deployed and converged. Apply complete! Resources: 3 added, 0 changed,
    > 0 destroyed. […] **Turf action:** the configuration has a step that waits for the Job, and
