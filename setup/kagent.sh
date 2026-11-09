@@ -5,7 +5,7 @@
 # CLI of the same release on PATH and ANTHROPIC_API_KEY in the environment;
 # the CLI stores the key in the kagent-anthropic Secret. Safe to run again.
 set -euo pipefail
-KAGENT_VERSION=${KAGENT_VERSION:-1.0.0-rc3}
+KAGENT_VERSION=${KAGENT_VERSION:-1.0.0}
 here=$(cd "$(dirname "$0")/.." && pwd)
 
 : "${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY}"

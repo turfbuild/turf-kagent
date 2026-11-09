@@ -146,11 +146,11 @@ documentation tools, each named.
 ## Run it
 
 You need Docker, [kind](https://kind.sigs.k8s.io) v0.32 or later, kubectl, Helm 3 or later, the
-kagent CLI 1.0.0-rc3, and an Anthropic API key. kagent 1.0 needs Kubernetes 1.37.
+kagent CLI 1.0.0, and an Anthropic API key. kagent 1.0 needs Kubernetes 1.37.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/kagent-dev/kagent/refs/heads/main/scripts/get-kagent \
-  | bash -s -- --version v1.0.0-rc3
+  | bash -s -- --version v1.0.0
 kind create cluster --name turf-kagent --image kindest/node:v1.37.0
 export ANTHROPIC_API_KEY=...
 ./setup/up.sh
@@ -255,14 +255,14 @@ claude mcp add --transport http kagent http://localhost:8083/mcp
   ([`cli-config.yaml`](manifests/turf/cli-config.yaml)) and reaches restate-server's admin API
   for its startup check; a mirror narrows the first.
 - **The agent does not always write the plan out before `apply`.** It is told to, and often
-  does, but on kagent 1.0.0-rc3 with Claude Sonnet 5.5 it sometimes calls `apply` right after
+  does, but on kagent 1.0.0 with Claude Sonnet 5.5 it sometimes calls `apply` right after
   `show`. The card then shows only the digest: open the round in the console (the link in the
   agent's message; its Plan tab is the plan), read the plan in the session's `show` result if
   your client shows tool results, or reject the card and ask the agent for the plan.
 - **Every authenticated client is one principal.** The token says that a caller may use the
   server, not which caller it is. kagent can mint a per-Actor JWT instead (`actorJwt` on the
   `RemoteMCPServer`), once the server can check one.
-- **A rejection's reason reaches the agent** on kagent 1.0.0-rc3 (on rc1 it did not): the
+- **A rejection's reason reaches the agent** on kagent 1.0.0 (on 1.0.0-rc1 it did not): the
   agent cancels the convergence, which frees the stack's lock, and answers with the reason.
 - **Session snapshots** go to the object store kagent installs (`snapshotPolicy` in
   [`harness.yaml`](manifests/kagent/harness.yaml)). They hold what the session holds: the
@@ -276,7 +276,7 @@ claude mcp add --transport http kagent http://localhost:8083/mcp
 - **Keep `knative.tag` and the image together.** A new tag is a new Restate deployment; the
   same tag with a new image updates in place, which Restate allows only for a change compatible
   with invocations in flight.
-- **Versions.** kagent 1.0.0-rc3, Knative Serving 1.24.0 with Kourier, the Restate operator
+- **Versions.** kagent 1.0.0, Knative Serving 1.24.0 with Kourier, the Restate operator
   3.2.0, restate-server 1.8.1, Turf 1.4.0, on kind with Kubernetes 1.37.0.
 
 ## Clean up
