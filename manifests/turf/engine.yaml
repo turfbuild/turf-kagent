@@ -18,7 +18,7 @@ metadata:
 # Providers run in the engine, so a kubernetes or helm provider configured
 # in-cluster authenticates as this ServiceAccount: what it may do is what the
 # agent's approved plans may do to the cluster. The demo configuration creates
-# a namespace and a ConfigMap in it, so this grants exactly that. A
+# a namespace, a ConfigMap and a Job in it, so this grants exactly that. A
 # configuration that manages more needs more: widen the ClusterRole to what it
 # declares (or, for a cluster the agent fully runs, bind cluster-admin).
 apiVersion: rbac.authorization.k8s.io/v1
@@ -28,6 +28,9 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: [namespaces, configmaps]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [batch]
+    resources: [jobs]
     verbs: [get, list, watch, create, update, patch, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -59,10 +62,11 @@ spec:
     # image.
     tag: v1-4
     minScale: 0
-    maxScale: 4
+    maxScale: 8
     # Concurrent requests per pod before Knative adds one. A round's steps
-    # are many short requests and a few long ones (a provider's apply).
-    target: 8
+    # are many short requests and a few long ones (a provider's apply); a
+    # low target makes several stacks converging at once spread over pods.
+    target: 4
   restate:
     register:
       cluster: turf
@@ -137,7 +141,7 @@ spec:
         # (setup/knative.sh).
         - name: configuration
           image:
-            reference: ghcr.io/turfbuild/turf-examples/kubernetes-in-cluster:1.0.0
+            reference: ghcr.io/turfbuild/turf-examples/kubernetes-in-cluster:1.1.0
             pullPolicy: IfNotPresent
         - name: data
           emptyDir: {}

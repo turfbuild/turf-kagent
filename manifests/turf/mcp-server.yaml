@@ -145,7 +145,7 @@ spec:
       volumes:
         - name: configuration
           image:
-            reference: ghcr.io/turfbuild/turf-examples/kubernetes-in-cluster:1.0.0
+            reference: ghcr.io/turfbuild/turf-examples/kubernetes-in-cluster:1.1.0
             pullPolicy: IfNotPresent
         - name: data
           emptyDir: {}
