@@ -39,11 +39,14 @@ spec:
     # image.
     tag: v1-4
     minScale: 0
-    maxScale: 8
+    # Every pod that takes part in a stack's round starts that stack's
+    # providers, and one AWS provider is most of a gigabyte once it has loaded
+    # its schema. So few pods, each with room for several stacks: one stack's
+    # round stays in a pod, and a second pod comes only with more stacks.
+    maxScale: 2
     # Concurrent requests per pod before Knative adds one. A round's steps
-    # are many short requests and a few long ones (a provider's apply); a
-    # low target makes several stacks converging at once spread over pods.
-    target: 4
+    # are many short requests and a few long ones (a provider's apply).
+    target: 20
   restate:
     register:
       cluster: turf
@@ -110,7 +113,7 @@ spec:
               cpu: 100m
               memory: 256Mi
             limits:
-              memory: 2Gi
+              memory: 5Gi
           securityContext:
             runAsUser: 1000
             runAsNonRoot: true

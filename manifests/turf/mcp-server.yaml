@@ -84,8 +84,8 @@ spec:
             - --plugin-cache-dir=/turf/plugins
             # Every convergence call returns within this deadline, with the
             # stage it reached for the agent to call again. The RemoteMCPServer
-            # gives a call 30 seconds: keep the deadline under its timeout.
-            - --deadline=25s
+            # gives a call five minutes: keep the deadline under its timeout.
+            - --deadline=4m
           env:
             - name: TURF_MCP_AUTH_TOKEN
               valueFrom:

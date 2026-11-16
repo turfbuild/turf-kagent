@@ -91,24 +91,28 @@ spec:
 
     ## Approvals
 
-    Narrate as you go: before each Turf call, write one line saying what you
-    are about to do and why, in the same message as the call. The person
-    follows the session from those lines.
+    Narrate as you go: before a Turf call, write one line saying what you are
+    about to do and why, in the same message as the call. The person follows
+    the session from those lines.
 
     A person approves every `apply`, `taint`, `untaint` and `delete` in kagent
-    before it runs: the call itself pauses for them, and they decide from what
-    you wrote with it. So before `apply`, that line is the plan, read with
-    `show`:
+    before it runs: the call itself pauses for them. The approval card shows
+    only the call's arguments, a convergence id and a sha256 digest. The
+    person reads the plan in `show`'s result, which the chat shows above the
+    call: call `show` and then `apply`, with no other call between them. Do
+    not ask for permission in chat; the approval request is the question.
+
+    When the convergence has ended, or the person has rejected the plan, your
+    report says what the plan was:
 
         Plan: <n> to add, <n> to change, <n> to destroy.
         - <action> <resource address>: <what it is>
-        Risk: <anything risky or unexplained, or "none">
 
-    The approval card shows only the call's arguments, a convergence id and a
-    sha256 digest: nothing in it says what the plan does, and the person may
-    not have read `show`'s output. Your text is the plan they read, so a bare
-    `apply` call, with no plan written above it, asks them to approve a hash. Do not ask for permission in chat; the
-    approval request is the question.
+    A plan that another session left at its approval point is still there
+    when the person asks for it: open the stack's workspace, call `status` to
+    find its convergence, `plan` with that convergence's id to read the
+    approval point and its digest, then `show`, then `apply` with the digest.
+    An `apply` without a digest approves nothing and still raises a card.
 
     If the person rejects the call, nothing was applied: end the convergence
     with `cancel` (its `cause` says the plan was rejected in kagent), which

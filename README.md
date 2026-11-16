@@ -21,7 +21,7 @@ kagent UI ── approve? ──► Agent "turf" (Actor, gVisor sandbox, Anthrop
 ns turf    turf-mcp-server :3000/mcp ──► restate-server (RestateCluster "turf", operator-managed)
                 │                              │  signed requests, via Knative's Route        │
                 │                              ▼                                              │
-                │                         turf-engine (RestateDeployment, Knative, 0…8 pods)  │
+                │                         turf-engine (RestateDeployment, Knative, 0…2 pods)  │
                 │                              │  providers run here, with the AWS key        │
                 ▼                              ▼                                              ▼
 ns kagent- Secret tfstate-<stack>-turf    AWS: an IAM role, Lambda functions ──────► their public URLs
@@ -54,7 +54,7 @@ engine may do is what an approved plan may do. Its ServiceAccount is bound to no
 changes nothing in the cluster it runs in. It is a `RestateDeployment` in Knative mode. The
 Restate operator creates a Knative Configuration and a cluster-local Route for it and registers
 the Route with restate-server. Knative scales the pods with the work in flight: `minScale: 0`,
-`maxScale: 8`, and `target: 4` concurrent requests per pod as the autoscaler's aim. A new Turf
+`maxScale: 2`, and `target: 20` concurrent requests per pod as the autoscaler's aim. A new Turf
 minor release gets a new `knative.tag`, which the operator registers as a new deployment while
 the old one finishes what it started.
 
@@ -224,10 +224,10 @@ open "http://localhost:8873/login?token=$(cat .secrets/console-token)"
    skill, runs `init` on `/turf/examples/terraform/aws/lambda-fleet`, opens workspace `demo` on
    the kubernetes backend, starts `up` with the stack's variables (two functions named
    `turf-kagent-demo-0` and `-1`), plans, and stops at the approval point. The UI shows an
-   approval card for `apply`, with the convergence and the plan digest (9 to add: the execution
-   role and its policy attachment, two functions, a URL and a permission for each, and the
-   rollout marker), and the agent's message above it links to the round in the console, at its
-   approval point with that digest. Engine pods appear in the first terminal as soon as the
+   approval card for `apply`, with the convergence and the plan digest. The plan itself is the
+   result of `show`, just above the call (9 to add: the execution role and its policy
+   attachment, two functions, a URL and a permission for each, and the rollout marker), and
+   the console shows the round at its approval point with that digest. Engine pods appear in the first terminal as soon as the
    agent opens the workspace. Approve, and the apply pauses at the turf action: the agent
    fetches both function URLs from its sandbox and reports back through `apply`, a second
    card. Approve that too. The engine pods go away a minute or so after the round ends, and
@@ -247,20 +247,23 @@ open "http://localhost:8873/login?token=$(cat .secrets/console-token)"
 4. **"Tear down the demo stack."** Another approval card, this time for a destroy plan. Reject
    it with a reason and nothing is applied: the agent cancels the convergence, which frees the
    stack's lock, and repeats your reason back. Ask again and approve, and the fleet is gone.
-5. **Four at once.** Open four sessions and ask each for a fleet of its own (`alpha` to
-   `delta`). Four convergences run side by side, the engine spreads them over pods
-   (`knative.target` and `maxScale` in [`engine.yaml`](manifests/turf/engine.yaml)), and each
-   session gets its own cards. The cluster is one pool of provider operations for everyone who
-   asks.
+5. **Several at once.** Open three sessions a minute apart and ask each for a fleet of its own
+   (`alpha`, `bravo`, `charlie`). The convergences run side by side, a second engine pod comes
+   and goes with the work, and each session gets its own cards. Every pod that takes part in a
+   stack's round starts that stack's AWS provider, most of a gigabyte each, which is what
+   `maxScale`, `target` and the memory limit in [`engine.yaml`](manifests/turf/engine.yaml) are
+   sized for on one kind node: more stacks at once want more memory.
 6. **Nobody typing.** In the kagent UI, add a Schedule for the agent with a prompt such as
-   "Nightly drift check. List the stacks: the lock-tfstate Leases in the kagent-tfstate namespace. For
-   each stack, open its workspace, read its outputs, start an up with its variables and plan
-   it. If the plan has no changes, cancel the convergence and move on. If a plan has changes,
-   say exactly what drifted and what the plan would do, then request the apply so it waits
-   for a person's approval in the morning. Finish with one line per stack." Change a
-   function's `GREETING` in the AWS console, run the schedule, and the plan that puts it back
-   is waiting at its approval point. kagent 1.0.0 cannot take the approval inside a turn a
-   schedule started: ask the agent about the stack in a chat, and the card comes up there.
+   "Nightly drift check. List the stacks: the lock-tfstate Leases in the kagent-tfstate
+   namespace. For each stack, open its workspace, read its outputs, start an up with its
+   variables and plan it. If the plan has no changes, cancel the convergence and move on. If a
+   plan has changes, say exactly what drifted and what the plan would do, and leave it waiting
+   at its approval point: do not call apply, because nobody is here to approve it. Finish with
+   one line per stack." Change a function's `GREETING` in the AWS console, run the schedule,
+   and the plan that puts it back is waiting at its approval point. kagent 1.0.0 cannot take an
+   approval inside a turn a schedule started, which is why the prompt stops short of `apply`:
+   in the morning, ask the agent in a chat to apply the waiting plan, and the card comes up
+   there.
 
 Restate's UI shows each round's invocations: `kubectl port-forward -n turf svc/restate 9070`, then
 http://localhost:9070.
@@ -307,6 +310,14 @@ claude mcp add --transport http kagent http://localhost:8083/mcp
   to Lambda. The engine also runs provider plugins from
   the registry ([`cli-config.yaml`](manifests/turf/cli-config.yaml)) and reaches
   restate-server's admin API for its startup check; a mirror narrows the first.
+- **An apply can take minutes.** kagent gives a tool call 30 seconds by default, which an apply
+  in AWS outlasts: the call times out, the agent calls `apply` again, and kagent raises a
+  second card for the same plan. So the Turf RemoteMCPServer's `timeout` is five minutes and
+  the server's `--deadline` four ([`remote-mcp-servers.yaml`](manifests/kagent/remote-mcp-servers.yaml),
+  [`mcp-server.yaml`](manifests/turf/mcp-server.yaml)). Keep the deadline under the timeout.
+- **A destroy leaves the functions' log groups** (`/aws/lambda/turf-kagent-*`). Lambda makes
+  one the first time a function runs; the configuration does not manage them and the engine's
+  key cannot delete them.
 - **The function URLs are public** (`authorization_type = "NONE"`): anyone who has one can call
   the function, which answers a greeting and nothing else. That is what lets a sandbox with no
   AWS credential check them. A URL behind IAM auth would need a signed request, and so a
