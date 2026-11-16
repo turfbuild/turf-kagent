@@ -3,7 +3,7 @@
 # manifests/kagent/remote-mcp-servers.yaml. It parses the configuration,
 # drives the engine through restate-server's ingress, and keeps each
 # workspace's state in the cluster (the OpenTofu kubernetes backend: a Secret
-# and a Lease per workspace, in this namespace).
+# and a Lease per workspace, in the kagent-tfstate namespace).
 #
 # Every request must carry "Authorization: Bearer <token>", the token in the
 # turf-mcp-auth Secret (setup/secrets.sh); anything else gets 401. kagent sends
@@ -14,14 +14,15 @@ metadata:
   name: turf-mcp-server
   namespace: turf
 ---
-# The state backend's rights, and no others: Secrets and Leases in this
-# namespace. The server never runs a provider, so it needs nothing else, and
-# it holds no AWS credential.
+# The state backend's rights, and no others: Secrets and Leases in kagent-tfstate,
+# which holds only state (namespace.yaml). The server never runs a provider, so
+# it needs nothing else: it has no rights in this namespace, where the engine's
+# AWS key is, and holds no AWS credential.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: turf-state
-  namespace: turf
+  name: tfstate-editor
+  namespace: kagent-tfstate
 rules:
   - apiGroups: [""]
     resources: [secrets]
@@ -34,14 +35,14 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: turf-mcp-server-state
-  namespace: turf
+  namespace: kagent-tfstate
 subjects:
   - kind: ServiceAccount
     name: turf-mcp-server
     namespace: turf
 roleRef:
   kind: Role
-  name: turf-state
+  name: tfstate-editor
   apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: v1

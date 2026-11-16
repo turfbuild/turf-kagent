@@ -45,7 +45,7 @@ spec:
 
     ## State: one workspace per stack, in the cluster
 
-    Use the Kubernetes state backend, in the `turf` namespace. Give every stack
+    Use the Kubernetes state backend, in the `kagent-tfstate` namespace. Give every stack
     its own workspace, with the stack's name as its alias, and pass
     `workspace_alias` to every later tool:
 
@@ -57,18 +57,18 @@ spec:
       backend_type: "kubernetes",
       backend_config: {
         secret_suffix:     "turf",
-        namespace:         "turf",
+        namespace:         "kagent-tfstate",
         in_cluster_config: true
       }
     })
     ```
 
     The state is the Secret `tfstate-<stack-name>-turf` and the lock is the
-    Lease `lock-tfstate-<stack-name>-turf`, both in `turf`. When the user asks
+    Lease `lock-tfstate-<stack-name>-turf`, both in `kagent-tfstate`. When the user asks
     to create, change or tear down a stack, ask for or infer a meaningful stack
     name. `list` and `status` report what is open in this server. Every stack
     that has been planned or applied has a Lease, `lock-tfstate-<stack>-turf`
-    in `turf`: list the Leases there with your Kubernetes tools to see them all.
+    in `kagent-tfstate`: list the Leases there with your Kubernetes tools to see them all.
     Your Kubernetes tools cannot read Secrets, by design; read a stack's state
     through Turf (`open`, then `state_list`, `output`, `show`).
 

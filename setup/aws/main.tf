@@ -86,13 +86,33 @@ resource "aws_iam_user_policy" "fleet" {
           "iam:DeleteRole",
           "iam:UpdateRole",
           "iam:UpdateAssumeRolePolicy",
-          "iam:PassRole",
-          "iam:AttachRolePolicy",
-          "iam:DetachRolePolicy",
           "iam:TagRole",
           "iam:UntagRole",
         ]
         Resource = "arn:aws:iam::${local.account_id}:role/${var.name_prefix}-*"
+      },
+      # A role the key creates can carry one managed policy, the one the fleet's
+      # execution role needs, and can be handed to Lambda and to nothing else:
+      # the name prefix alone would let such a role be given any policy.
+      {
+        Sid      = "ExecutionRolePolicy"
+        Effect   = "Allow"
+        Action   = ["iam:AttachRolePolicy", "iam:DetachRolePolicy"]
+        Resource = "arn:aws:iam::${local.account_id}:role/${var.name_prefix}-*"
+        Condition = {
+          ArnEquals = {
+            "iam:PolicyARN" = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+          }
+        }
+      },
+      {
+        Sid      = "PassExecutionRole"
+        Effect   = "Allow"
+        Action   = "iam:PassRole"
+        Resource = "arn:aws:iam::${local.account_id}:role/${var.name_prefix}-*"
+        Condition = {
+          StringEquals = { "iam:PassedToService" = "lambda.amazonaws.com" }
+        }
       },
     ]
   })

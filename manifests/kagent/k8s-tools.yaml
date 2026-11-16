@@ -5,7 +5,7 @@
 # an agent bound to it could read any Secret in the cluster, the Turf token,
 # the engine's signing key and the model's API key included, however few of
 # its tools the binding names. This one is bound to Kubernetes' built-in
-# `view` ClusterRole, which leaves Secrets out, plus the Leases in `turf`: one
+# `view` ClusterRole, which leaves Secrets out, plus the Leases in `kagent-tfstate`: one
 # per stack, the state backend's locks, which say what stacks exist and hold
 # no data.
 apiVersion: v1
@@ -30,8 +30,8 @@ roleRef:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: turf-stack-leases
-  namespace: turf
+  name: tfstate-lock-reader
+  namespace: kagent-tfstate
 rules:
   - apiGroups: [coordination.k8s.io]
     resources: [leases]
@@ -41,14 +41,14 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: turf-k8s-reader-leases
-  namespace: turf
+  namespace: kagent-tfstate
 subjects:
   - kind: ServiceAccount
     name: turf-k8s-reader
     namespace: kagent
 roleRef:
   kind: Role
-  name: turf-stack-leases
+  name: tfstate-lock-reader
   apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: v1

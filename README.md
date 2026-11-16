@@ -24,8 +24,8 @@ ns turf    turf-mcp-server :3000/mcp ──► restate-server (RestateCluster "t
                 │                         turf-engine (RestateDeployment, Knative, 0…8 pods)  │
                 │                              │  providers run here, with the AWS key        │
                 ▼                              ▼                                              ▼
-           Secret tfstate-<stack>-turf    AWS: an IAM role, Lambda functions ──────► their public URLs
-           Lease  lock-tfstate-<stack>-turf
+ns kagent- Secret tfstate-<stack>-turf    AWS: an IAM role, Lambda functions ──────► their public URLs
+tfstate    Lease  lock-tfstate-<stack>-turf
 ```
 
 ## What runs where
@@ -34,14 +34,17 @@ ns turf    turf-mcp-server :3000/mcp ──► restate-server (RestateCluster "t
 |---|---|---|
 | `kagent` | the controller and UI; the WorkerPool the agent's sandbox runs on; the agent's `Harness`, `AgentTemplate` and `Agent`; a `ModelConfig` for Anthropic; `RemoteMCPServer`s for Turf, the OpenTofu Registry and a read-only Kubernetes tool server | [`manifests/kagent/`](manifests/kagent) |
 | `ate-system` | Agent Substrate's control plane, and the egress gateway every connection from the sandbox goes through | `kagent install` |
-| `turf` | everything Turf: restate-server, the MCP server, the engine, the console, and the state | [`manifests/turf/`](manifests/turf) |
+| `turf` | everything that runs Turf: restate-server, the MCP server, the engine, the console, and their Secrets | [`manifests/turf/`](manifests/turf) |
+| `kagent-tfstate` | the state of the stacks that the agents in `kagent` run, and nothing else: a Secret and a Lease per stack | [`manifests/turf/namespace.yaml`](manifests/turf/namespace.yaml) |
 | `knative-serving`, `kourier-system` | Knative Serving and its Kourier gateway | [`setup/knative.sh`](setup/knative.sh) |
 | `restate-operator` | the Restate operator | [`setup/restate-operator.sh`](setup/restate-operator.sh) |
 
 **The MCP server** ([`mcp-server.yaml`](manifests/turf/mcp-server.yaml)) is the agent's toolbox: it
 parses the configuration, opens state, and drives the engine through restate-server's ingress.
-Its ServiceAccount can read and write Secrets and Leases in `turf`, the OpenTofu kubernetes
-backend's two objects, and nothing else (that is every Secret in `turf`; see Notes).
+Its ServiceAccount can read and write Secrets and Leases in `kagent-tfstate`, the OpenTofu
+kubernetes backend's two objects, and nothing else. State has a namespace of its own so that
+this right, which Kubernetes cannot narrow by name, covers no other Secret: the server has no
+rights in `turf`, where the engine's AWS key is.
 
 **The engine** ([`engine.yaml`](manifests/turf/engine.yaml)) plans and applies, and it is where
 provider plugins run, so it holds the providers' credentials. Here that is one AWS access key,
@@ -238,7 +241,7 @@ open "http://localhost:8873/login?token=$(cat .secrets/console-token)"
    place and the rollout marker, one card; then the agent fetches both URLs again and reports
    the new greeting, a second card.
 3. **"What stacks exist, and what is in demo?"** Read-only, no pause: the agent lists the
-   stacks' Leases in `turf` with its Kubernetes tools, then reads each stack's state through
+   stacks' Leases in `kagent-tfstate` with its Kubernetes tools, then reads each stack's state through
    Turf. Ask it for the AWS key, or any Secret, and it cannot: the key is in another namespace,
    its sandbox mounts nothing, and its tool server's role has no access to Secrets.
 4. **"Tear down the demo stack."** Another approval card, this time for a destroy plan. Reject
@@ -250,7 +253,7 @@ open "http://localhost:8873/login?token=$(cat .secrets/console-token)"
    session gets its own cards. The cluster is one pool of provider operations for everyone who
    asks.
 6. **Nobody typing.** In the kagent UI, add a Schedule for the agent with a prompt such as
-   "Nightly drift check. List the stacks: the lock-tfstate Leases in the turf namespace. For
+   "Nightly drift check. List the stacks: the lock-tfstate Leases in the kagent-tfstate namespace. For
    each stack, open its workspace, read its outputs, start an up with its variables and plan
    it. If the plan has no changes, cancel the convergence and move on. If a plan has changes,
    say exactly what drifted and what the plan would do, then request the apply so it waits
@@ -290,16 +293,18 @@ claude mcp add --transport http kagent http://localhost:8083/mcp
   NetworkPolicy selects one part's pods.
 - **The token crosses the cluster network in cleartext**, from the egress gateway to the MCP
   server over `http://`. Serve the MCP server over TLS (or run a mesh) where that matters.
-- **The MCP server can read every Secret in `turf`**, the engine's signing key and its own
-  token included, because the state backend needs Secrets there and Kubernetes RBAC cannot
-  scope `create` and `list` by name. Everything Turf shares one namespace here; to narrow it,
-  keep the state in a namespace of its own (`backend_config.namespace` in the agent's prompt)
-  and move the Role there.
+- **The MCP server can read every Secret in `kagent-tfstate`**, because the state backend needs
+  Secrets there and Kubernetes RBAC cannot scope `create` and `list` by name. That is why state
+  has a namespace of its own: nothing else is kept in it, and the server has no rights in
+  `turf`, where the token, the signing key and the engine's AWS key are. The namespace is named
+  in three places that must agree: `namespace.yaml`, the Roles in `mcp-server.yaml` and
+  `k8s-tools.yaml`, and `backend_config.namespace` in the agent's prompt.
 - **The engine's AWS key is the demo's**: Lambda functions and IAM roles named `turf-kagent-*`,
   in one region. Widen the policy in [`setup/aws`](setup/aws) to what your configurations
-  declare, and prefer a role to a key where the cluster has a cloud identity. A long-lived key
-  sits in a Secret in `turf`, which the MCP server's Role can read (the note above): keep the
-  state in a namespace of its own to separate them. The engine also runs provider plugins from
+  declare, and prefer a role to a key where the cluster has a cloud identity. The key is a
+  long-lived one, in a Secret in `turf` that only the engine's pods mount; the roles it may
+  create can carry one managed policy, Lambda's basic execution role, and can be passed only
+  to Lambda. The engine also runs provider plugins from
   the registry ([`cli-config.yaml`](manifests/turf/cli-config.yaml)) and reaches
   restate-server's admin API for its startup check; a mirror narrows the first.
 - **The function URLs are public** (`authorization_type = "NONE"`): anyone who has one can call
