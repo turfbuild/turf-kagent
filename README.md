@@ -329,11 +329,12 @@ claude mcp add --transport http kagent http://localhost:8083/mcp
   read-only mount.
 - **The sandbox has `wget`, not `curl`** (busybox, in kagent's runtime image), and the agent's
   prompt says so. It trusts the egress gateway's CA, which terminates TLS to apply the policy.
-- **The agent does not always write the plan out before `apply`.** It is told to, and often
-  does, but on kagent 1.0.0 with Claude Sonnet 5.5 it sometimes calls `apply` right after
-  `show`. The card then shows only the digest: open the round in the console (the link in the
-  agent's message; its Plan tab is the plan), read the plan in the session's `show` result if
-  your client shows tool results, or reject the card and ask the agent for the plan.
+- **The approval card shows only the call**: a convergence id and a digest. On kagent 1.0.0
+  with Claude Sonnet 5.5 the agent does not write the plan out above the card, however the
+  prompt asks, so the prompt has it call `show` right before `apply` and say what the plan was
+  in its report. To read a plan before you approve it: the `show` result just above the card,
+  the round in the console (the link in every result; its Plan tab is the plan), or reject the
+  card and ask the agent for the plan.
 - **Every authenticated client is one principal.** The token says that a caller may use the
   server, not which caller it is. kagent can mint a per-Actor JWT instead (`actorJwt` on the
   `RemoteMCPServer`), once the server can check one.
