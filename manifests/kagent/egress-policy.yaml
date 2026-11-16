@@ -1,0 +1,16 @@
+# The one outside origin the agent's sandbox may reach on its own: the public
+# URLs of Lambda functions in this region, which a turf action asks the agent
+# to fetch after a rollout (the fleet's verify step). Agent Substrate's egress
+# gateway denies everything a sandbox is not granted; the model and the Agent's
+# MCP servers are granted by naming them, and anything else needs a policy like
+# this one, selected by the Agent (agent.yaml, egressPolicyRefs). The origin
+# carries no credential: the URLs are public, and the agent holds no AWS key.
+# Change the region here with AWS_REGION in manifests/turf/engine.yaml.
+apiVersion: api.kagent.dev/v1alpha3
+kind: EgressPolicy
+metadata:
+  name: lambda-function-urls
+  namespace: kagent
+spec:
+  destinations:
+    - origin: https://*.lambda-url.us-west-2.on.aws

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The four Secrets the stack needs, created from files in .secrets/ (made here
+# The five Secrets the stack needs, created from files in .secrets/ (made here
 # when missing, and kept so a second run changes nothing):
 #   turf/turf-engine-identity  identity.pem (restate-server signs every
 #                              request to the engine with it) and public-key
@@ -9,6 +9,10 @@
 #                              value kagent sends
 #   turf/turf-console-auth     token: the console's, which a browser gives
 #                              once at /login?token= (console.yaml)
+#   turf/turf-aws              access-key-id and secret-access-key: the AWS
+#                              key the engine's providers use (engine.yaml).
+#                              Not made here: setup/aws makes it, once, with
+#                              your own AWS session.
 # The key pair comes from the engine itself, run once in Docker. Keep
 # .secrets/ out of version control (.gitignore does). Safe to run again: with
 # no .secrets/ but the Secrets already in the cluster (a fresh clone), it
@@ -30,6 +34,8 @@ recover turf turf-engine-identity 'identity\.pem' identity.pem
 recover turf turf-engine-identity public-key public-key
 recover turf turf-mcp-auth token mcp-token
 recover turf turf-console-auth token console-token
+recover turf turf-aws access-key-id aws-access-key-id
+recover turf turf-aws secret-access-key aws-secret-access-key
 
 if [ ! -s "$dir/identity.pem" ]; then
   docker run --rm --user "$(id -u)" -v "$dir:/k" "ghcr.io/turfbuild/turf-mcp-server:$TURF_VERSION" \
@@ -43,6 +49,10 @@ if [ ! -s "$dir/console-token" ]; then
   (umask 077 && openssl rand -hex 32 | tr -d '\n' > "$dir/console-token")
 fi
 (umask 077 && printf 'Bearer %s' "$(cat "$dir/mcp-token")" > "$dir/authorization")
+if [ ! -s "$dir/aws-access-key-id" ] || [ ! -s "$dir/aws-secret-access-key" ]; then
+  echo "no AWS key in $dir: make the engine's with setup/aws first (turf -C setup/aws up; README, \"The AWS key\")" >&2
+  exit 1
+fi
 
 kubectl get namespace kagent >/dev/null || { echo "install kagent first (setup/kagent.sh)" >&2; exit 1; }
 kubectl get namespace turf >/dev/null 2>&1 || kubectl apply -f "$here/manifests/turf/namespace.yaml"
@@ -54,4 +64,7 @@ kubectl -n turf create secret generic turf-mcp-auth --from-file=token="$dir/mcp-
 kubectl -n kagent create secret generic turf-mcp-auth --from-file=authorization="$dir/authorization" \
   --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n turf create secret generic turf-console-auth --from-file=token="$dir/console-token" \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n turf create secret generic turf-aws \
+  --from-file=access-key-id="$dir/aws-access-key-id" --from-file=secret-access-key="$dir/aws-secret-access-key" \
   --dry-run=client -o yaml | kubectl apply -f -

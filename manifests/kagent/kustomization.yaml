@@ -5,4 +5,5 @@ resources:
   - remote-mcp-servers.yaml
   - model-config.yaml
   - harness.yaml
+  - egress-policy.yaml
   - agent.yaml

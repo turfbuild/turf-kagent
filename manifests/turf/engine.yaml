@@ -9,42 +9,19 @@
 # The engine serves only requests restate-server signs (TURF_ENGINE_IDENTITY_KEYS
 # is the public half of the key on the RestateCluster), and network-policies.yaml
 # admits only Knative's data path besides.
+#
+# Providers run in the engine, so the engine holds their credentials. For the
+# Lambda fleet that is one AWS access key (the turf-aws Secret, in the
+# container's env below), scoped to the fleet's own names: what the key may do
+# is what the agent's approved plans may do to the account. This
+# ServiceAccount is bound to no Role: the engine changes nothing in the
+# cluster it runs in. A configuration that manages Kubernetes too would bind
+# it to what that configuration declares.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: turf-engine
   namespace: turf
----
-# Providers run in the engine, so a kubernetes or helm provider configured
-# in-cluster authenticates as this ServiceAccount: what it may do is what the
-# agent's approved plans may do to the cluster. The demo configuration creates
-# a namespace, a ConfigMap and a Job in it, so this grants exactly that. A
-# configuration that manages more needs more: widen the ClusterRole to what it
-# declares (or, for a cluster the agent fully runs, bind cluster-admin).
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: turf-engine
-rules:
-  - apiGroups: [""]
-    resources: [namespaces, configmaps]
-    verbs: [get, list, watch, create, update, patch, delete]
-  - apiGroups: [batch]
-    resources: [jobs]
-    verbs: [get, list, watch, create, update, patch, delete]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: turf-engine
-subjects:
-  - kind: ServiceAccount
-    name: turf-engine
-    namespace: turf
-roleRef:
-  kind: ClusterRole
-  name: turf-engine
-  apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: restate.dev/v1beta1
 kind: RestateDeployment
@@ -105,6 +82,23 @@ spec:
                   key: public-key
             - name: TF_CLI_CONFIG_FILE
               value: /turf/cli/turf.tfrc
+            # The AWS provider's credentials, read from the environment as the
+            # provider always does: the key setup/aws makes and
+            # setup/secrets.sh stores. No other pod mounts this Secret, and the
+            # agent's sandbox is in another namespace. On EKS, drop these two
+            # and give the ServiceAccount a role with EKS Pod Identity instead.
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: turf-aws
+                  key: access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: turf-aws
+                  key: secret-access-key
+            - name: AWS_REGION
+              value: us-west-2
           # The engine speaks HTTP/2 without TLS, and nothing else: Knative's
           # port name says so (h2c), and its default readiness check, a TCP
           # connect, is the only kind it answers.
@@ -126,8 +120,8 @@ spec:
             seccompProfile:
               type: RuntimeDefault
           volumeMounts:
-            - name: configuration
-              mountPath: /turf/config
+            - name: examples
+              mountPath: /turf/examples
               readOnly: true
             - name: data
               mountPath: /turf/data
@@ -139,9 +133,12 @@ spec:
       volumes:
         # Knative admits image volumes with kubernetes.podspec-volumes-image
         # (setup/knative.sh).
-        - name: configuration
+        # The examples image: the turfbuild/turf-examples repository, read-only.
+        # The agent gives Turf the path of the configuration to run inside it
+        # (terraform/aws/lambda-fleet).
+        - name: examples
           image:
-            reference: ghcr.io/turfbuild/turf-examples/kubernetes-in-cluster:1.1.0
+            reference: ghcr.io/turfbuild/turf-examples:1.0.0
             pullPolicy: IfNotPresent
         - name: data
           emptyDir: {}

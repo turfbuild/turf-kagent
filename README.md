@@ -1,24 +1,30 @@
 # Turf in kagent
 
-An infrastructure agent that lives in the cluster it manages. [kagent](https://kagent.dev) 1.0
-runs the agent in a gVisor sandbox; [Turf](https://turf.build) gives it Terraform's commands as
-tools: plan, approve, apply, round after round. Turf's engine runs as a Knative service on
-restate-server, which scales from zero when a round starts, fans out while it runs and drains
-back to zero. State stays in the cluster, a Secret per stack. Every apply waits for a person
-in the kagent UI.
+An infrastructure agent in a Kubernetes cluster, running infrastructure outside it.
+[kagent](https://kagent.dev) 1.0 runs the agent in a gVisor sandbox; [Turf](https://turf.build)
+gives it Terraform's commands as tools: plan, approve, apply, round after round. The cluster is
+the control plane: the agent, the approvals, the engine and the state all live in it. What the
+agent runs here is a fleet of AWS Lambda functions, and after each rollout it calls every
+function to prove the fleet answers.
+
+Turf's engine runs as a Knative service on restate-server, which scales from zero when a round
+starts, fans out while it runs and drains back to zero. It holds the AWS key; the agent's
+sandbox holds no credential at all. State stays in the cluster, a Secret per stack. Every apply
+waits for a person in the kagent UI.
 
 ```
 kagent UI ── approve? ──► Agent "turf" (Actor, gVisor sandbox, Anthropic model)
                                │  tool call, through Agent Substrate's egress gateway
                                │  (the gateway adds "Authorization: Bearer …")
-                               ▼
+                               │                          GET, to the fleet's URLs only ──────┐
+                               ▼                                                              │
 ns turf    turf-mcp-server :3000/mcp ──► restate-server (RestateCluster "turf", operator-managed)
-                │                              │  signed requests, via Knative's Route
-                │                              ▼
-                │                         turf-engine (RestateDeployment, Knative, 0…4 pods)
-                │                              │  providers run here
-                ▼                              ▼
-           Secret tfstate-<stack>-turf    the cluster (or any cloud API)
+                │                              │  signed requests, via Knative's Route        │
+                │                              ▼                                              │
+                │                         turf-engine (RestateDeployment, Knative, 0…8 pods)  │
+                │                              │  providers run here, with the AWS key        │
+                ▼                              ▼                                              ▼
+           Secret tfstate-<stack>-turf    AWS: an IAM role, Lambda functions ──────► their public URLs
            Lease  lock-tfstate-<stack>-turf
 ```
 
@@ -38,13 +44,14 @@ Its ServiceAccount can read and write Secrets and Leases in `turf`, the OpenTofu
 backend's two objects, and nothing else (that is every Secret in `turf`; see Notes).
 
 **The engine** ([`engine.yaml`](manifests/turf/engine.yaml)) plans and applies, and it is where
-provider plugins run, so it holds the providers' credentials. Here that is its
-ServiceAccount, which the demo configuration's kubernetes provider uses in-cluster, with a
-ClusterRole for exactly what the demo manages (namespaces and ConfigMaps): what the engine may
-do is what an approved plan may do. It is a `RestateDeployment` in Knative mode. The Restate
-operator creates a Knative Configuration and a cluster-local Route for it and registers the
-Route with restate-server. Knative scales the pods with the work in flight: `minScale: 0`,
-`maxScale: 4`, and `target: 8` concurrent requests per pod as the autoscaler's aim. A new Turf
+provider plugins run, so it holds the providers' credentials. Here that is one AWS access key,
+in the `turf-aws` Secret that only the engine's pods mount, for an IAM user whose policy covers
+the fleets' own names and nothing else in the account ([`setup/aws`](setup/aws)): what the
+engine may do is what an approved plan may do. Its ServiceAccount is bound to no Role, so it
+changes nothing in the cluster it runs in. It is a `RestateDeployment` in Knative mode. The
+Restate operator creates a Knative Configuration and a cluster-local Route for it and registers
+the Route with restate-server. Knative scales the pods with the work in flight: `minScale: 0`,
+`maxScale: 8`, and `target: 4` concurrent requests per pod as the autoscaler's aim. A new Turf
 minor release gets a new `knative.tag`, which the operator registers as a new deployment while
 the old one finishes what it started.
 
@@ -59,14 +66,18 @@ approval point.
 **restate-server** ([`restate-cluster.yaml`](manifests/turf/restate-cluster.yaml)) is a
 `RestateCluster`, one node with its data on a PersistentVolume, provisioned by the operator.
 
-**The configuration** is a configuration image,
-`ghcr.io/turfbuild/turf-examples/kubernetes-in-cluster`: a namespace and a ConfigMap, mounted
-read-only at `/turf/config` in the MCP server's pod and every engine pod. The agent operates it;
-it does not edit it. A change is a new image version.
+**The configuration** comes from the examples image, `ghcr.io/turfbuild/turf-examples`: the
+[turfbuild/turf-examples](https://github.com/turfbuild/turf-examples) repository, mounted
+read-only at `/turf/examples` in the MCP server's pod and every engine pod. The agent gives
+Turf a path inside it,
+[`terraform/aws/lambda-fleet`](https://github.com/turfbuild/turf-examples/tree/main/terraform/aws/lambda-fleet):
+one execution role, a fleet of Lambda functions, a public URL for each, and a turf action that
+verifies the rollout. The agent operates it; it does not edit it. A change is a new image
+version.
 
 ## Who may talk to whom
 
-Four controls, each independent of the others.
+Five controls, each independent of the others.
 
 1. **A bearer token, kagent → the MCP server.** The server answers only requests carrying
    `Authorization: Bearer <token>` (`TURF_MCP_AUTH_TOKEN`), and 401 to anything else. kagent
@@ -86,12 +97,19 @@ Four controls, each independent of the others.
    ingress, the engine on the admin API (its startup version check). Ours
    ([`network-policies.yaml`](manifests/turf/network-policies.yaml)) admit kagent's controller
    (tool discovery) and egress gateway to the MCP server and the Kubernetes tool server, only
-   Knative's data path to the engine's pods, and nothing at all to the console. Agent
-   Substrate's own egress policy lets the agent's sandbox reach the model, its MCP servers and
-   nothing else. Knative's data path is shared, though: Kourier's internal gateway serves every
+   Knative's data path to the engine's pods, and nothing at all to the console. Knative's data
+   path is shared, though: Kourier's internal gateway serves every
    Knative service in the cluster, so any pod can reach the engine through its Route, and there
    the signature (control 2) is what refuses it.
-4. **A token, you → the console.** The console answers no read without the token in
+4. **Egress, the sandbox → the world.** Agent Substrate's egress gateway denies everything a
+   sandbox is not granted. The model and the Agent's MCP servers are granted by being named.
+   One more origin is granted here, by an `EgressPolicy` the Agent selects
+   ([`egress-policy.yaml`](manifests/kagent/egress-policy.yaml)): the public URLs of Lambda
+   functions in the region, `https://*.lambda-url.us-west-2.on.aws`, so the agent can call the
+   functions it deployed. It carries no credential. The AWS API is not on the list, and the
+   sandbox has no key to use there anyway. The engine's own egress is open: providers reach
+   whatever APIs a configuration names.
+5. **A token, you → the console.** The console answers no read without the token in
    `turf-console-auth` (`TURF_CONSOLE_AUTH_TOKEN`): a browser gives it once at
    `/login?token=…` and keeps a cookie, a program sends it as a bearer header, and only
    `/api/health` answers without it. A port-forward is the only way to the pod, and the token
@@ -107,7 +125,7 @@ curl -m 5 http://turf-mcp-server.turf.svc:3000/mcp                      # timed 
 curl -m 5 http://turf-k8s-reader.kagent.svc:8084/mcp                    # timed out
 curl -m 5 http://turf-console.turf.svc:8873/api/health                  # timed out
 curl -m 5 http://<engine pod IP>:8012/                                  # timed out
-curl --http2-prior-knowledge http://turf-engine-v1-3.turf.svc.cluster.local/discover   # 401
+curl --http2-prior-knowledge http://turf-engine-v1-4.turf.svc.cluster.local/discover   # 401
 ```
 
 The last one goes through Kourier and reaches the engine, which refuses it: restate-server did
@@ -137,16 +155,33 @@ and nothing else. The card shows the call's arguments, the convergence and the d
 itself is the `show` call just above it in the session (see Notes).
 
 The configuration also declares a **turf action**: a step of the apply that the agent carries
-out instead of a provider. After the Job is created, the apply pauses, and the agent watches the
-Job with its read-only Kubernetes tools and reports its result through `apply` again, which is
-one more card. A turf action that asks the user something reaches them through kagent's
-`ask_user`. The other two bindings are read-only Kubernetes tools and the OpenTofu Registry's
-documentation tools, each named.
+out instead of a provider. After the fleet is created or patched, the apply pauses, and the
+agent fetches every function's URL from its sandbox (the shell, through the egress policy
+above), checks each answers with the declared greeting, and reports the result through `apply`
+again, which is one more card. A turf action that asks the user something reaches them through
+kagent's `ask_user`. The other two bindings are read-only Kubernetes tools, which list the
+stacks' Leases, and the OpenTofu Registry's documentation tools, each named.
 
 ## Run it
 
 You need Docker, [kind](https://kind.sigs.k8s.io) v0.32 or later, kubectl, Helm 3 or later, the
-kagent CLI 1.0.0, and an Anthropic API key. kagent 1.0 needs Kubernetes 1.37.
+kagent CLI 1.0.0, an Anthropic API key, and an AWS account. kagent 1.0 needs Kubernetes 1.37.
+
+### The AWS key
+
+The engine acts in AWS as an IAM user made for it, `turf-kagent-engine`, whose policy allows
+Lambda functions and IAM roles named `turf-kagent-*` in one region and nothing else.
+[`setup/aws`](setup/aws) creates the user, the policy and one access key, with your own AWS
+session, and writes the key to `.secrets/`:
+
+```sh
+turf -C setup/aws up        # or: tofu -chdir=setup/aws init && tofu -chdir=setup/aws apply
+```
+
+On a cluster with a cloud identity, give the engine's ServiceAccount a role with the same policy
+instead (EKS Pod Identity) and leave the key out of [`engine.yaml`](manifests/turf/engine.yaml).
+
+### The cluster
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/kagent-dev/kagent/refs/heads/main/scripts/get-kagent \
@@ -182,37 +217,47 @@ kubectl port-forward -n turf svc/turf-console 8873
 open "http://localhost:8873/login?token=$(cat .secrets/console-token)"
 ```
 
-1. **"Deploy the mounted configuration as a stack called demo."** The agent loads Turf's
-   deployment skill, runs `init` on `/turf/config`, opens workspace `demo` on the kubernetes
-   backend, starts `up`, plans, and stops at the approval point. The UI shows an approval card
-   for `apply`, with the convergence and the plan digest (3 to add: the namespace, the
-   ConfigMap and the Job), and the agent's message above it links to the round in the console,
-   at its approval point with that digest. Engine pods appear in the first terminal as soon as
-   the agent opens the workspace. Approve, and the apply pauses at the turf action: the agent
-   checks the Job and its pod with its Kubernetes tools and reports back through `apply`, a
-   second card. Approve that too. From a run on kind:
+1. **"Deploy the Lambda fleet as a stack called demo."** The agent loads Turf's deployment
+   skill, runs `init` on `/turf/examples/terraform/aws/lambda-fleet`, opens workspace `demo` on
+   the kubernetes backend, starts `up` with the stack's variables (two functions named
+   `turf-kagent-demo-0` and `-1`), plans, and stops at the approval point. The UI shows an
+   approval card for `apply`, with the convergence and the plan digest (9 to add: the execution
+   role and its policy attachment, two functions, a URL and a permission for each, and the
+   rollout marker), and the agent's message above it links to the round in the console, at its
+   approval point with that digest. Engine pods appear in the first terminal as soon as the
+   agent opens the workspace. Approve, and the apply pauses at the turf action: the agent
+   fetches both function URLs from its sandbox and reports back through `apply`, a second
+   card. Approve that too. The engine pods go away a minute or so after the round ends, and
+   the functions answer anyone:
 
-   > The `demo` stack is deployed and converged. Apply complete! Resources: 3 added, 0 changed,
-   > 0 destroyed. […] **Turf action:** the configuration has a step that waits for the Job, and
-   > the apply paused there. I checked the Job myself. It had `succeeded: 1` and condition
-   > `Complete`, and its pod `greet-tb9jv` was `Completed`. The pod's log line was `Hello from
-   > a configuration image.`, and I reported that back as a success. The state is in the
-   > Secret `tfstate-demo-turf` in the `turf` namespace.
-
-   The engine pods go away a minute or so after the round ends.
-2. **"What stacks exist, and what is in demo?"** Read-only, no pause: the agent lists the
+   ```sh
+   curl https://<id>.lambda-url.us-west-2.on.aws/
+   # {"message":"Hello from the cluster.","function":"turf-kagent-demo-0"}
+   ```
+2. **"Change demo's greeting to 'Patched from the cluster.'"** A second plan, two updates in
+   place and the rollout marker, one card; then the agent fetches both URLs again and reports
+   the new greeting, a second card.
+3. **"What stacks exist, and what is in demo?"** Read-only, no pause: the agent lists the
    stacks' Leases in `turf` with its Kubernetes tools, then reads each stack's state through
-   Turf. Ask it for a Secret and it cannot: the tool server's role has no access to them.
-3. **"Tear down the demo stack."** Another approval card, this time for a destroy plan. Reject
+   Turf. Ask it for the AWS key, or any Secret, and it cannot: the key is in another namespace,
+   its sandbox mounts nothing, and its tool server's role has no access to Secrets.
+4. **"Tear down the demo stack."** Another approval card, this time for a destroy plan. Reject
    it with a reason and nothing is applied: the agent cancels the convergence, which frees the
-   stack's lock, and repeats your reason back. Ask again and approve, and the namespace is gone.
-4. **"Deploy it as a stack called team-a, but ask me which namespace and greeting to use
-   first."** The agent asks both questions through `ask_user` before it plans.
-5. **Four at once.** Open four sessions and ask each for its own stack (`team-a` to `team-d`,
-   each with `namespace` set to its name). Four convergences run side by side, the engine
-   spreads them over pods (`knative.target` and `maxScale` in
-   [`engine.yaml`](manifests/turf/engine.yaml)), and each session gets its own cards. The
-   cluster is one pool of provider operations for everyone who asks.
+   stack's lock, and repeats your reason back. Ask again and approve, and the fleet is gone.
+5. **Four at once.** Open four sessions and ask each for a fleet of its own (`alpha` to
+   `delta`). Four convergences run side by side, the engine spreads them over pods
+   (`knative.target` and `maxScale` in [`engine.yaml`](manifests/turf/engine.yaml)), and each
+   session gets its own cards. The cluster is one pool of provider operations for everyone who
+   asks.
+6. **Nobody typing.** In the kagent UI, add a Schedule for the agent with a prompt such as
+   "Nightly drift check. List the stacks: the lock-tfstate Leases in the turf namespace. For
+   each stack, open its workspace, read its outputs, start an up with its variables and plan
+   it. If the plan has no changes, cancel the convergence and move on. If a plan has changes,
+   say exactly what drifted and what the plan would do, then request the apply so it waits
+   for a person's approval in the morning. Finish with one line per stack." Change a
+   function's `GREETING` in the AWS console, run the schedule, and the plan that puts it back
+   is waiting at its approval point. kagent 1.0.0 cannot take the approval inside a turn a
+   schedule started: ask the agent about the stack in a chat, and the card comes up there.
 
 Restate's UI shows each round's invocations: `kubectl port-forward -n turf svc/restate 9070`, then
 http://localhost:9070.
@@ -250,10 +295,24 @@ claude mcp add --transport http kagent http://localhost:8083/mcp
   scope `create` and `list` by name. Everything Turf shares one namespace here; to narrow it,
   keep the state in a namespace of its own (`backend_config.namespace` in the agent's prompt)
   and move the Role there.
-- **The engine's ClusterRole is the demo's**: namespaces, ConfigMaps and Jobs. Widen it to what your
-  configurations declare. The engine also runs provider plugins from the registry
-  ([`cli-config.yaml`](manifests/turf/cli-config.yaml)) and reaches restate-server's admin API
-  for its startup check; a mirror narrows the first.
+- **The engine's AWS key is the demo's**: Lambda functions and IAM roles named `turf-kagent-*`,
+  in one region. Widen the policy in [`setup/aws`](setup/aws) to what your configurations
+  declare, and prefer a role to a key where the cluster has a cloud identity. A long-lived key
+  sits in a Secret in `turf`, which the MCP server's Role can read (the note above): keep the
+  state in a namespace of its own to separate them. The engine also runs provider plugins from
+  the registry ([`cli-config.yaml`](manifests/turf/cli-config.yaml)) and reaches
+  restate-server's admin API for its startup check; a mirror narrows the first.
+- **The function URLs are public** (`authorization_type = "NONE"`): anyone who has one can call
+  the function, which answers a greeting and nothing else. That is what lets a sandbox with no
+  AWS credential check them. A URL behind IAM auth would need a signed request, and so a
+  credential the agent is not meant to have; there, let a provider's action do the check in
+  the engine.
+- **The examples image holds every example**, and the agent can `init` any path in it. What a
+  plan can then do is still bounded by the engine's key and a person's approval. Only
+  configurations that commit their lock file and write nothing at plan time run from the
+  read-only mount.
+- **The sandbox has `wget`, not `curl`** (busybox, in kagent's runtime image), and the agent's
+  prompt says so. It trusts the egress gateway's CA, which terminates TLS to apply the policy.
 - **The agent does not always write the plan out before `apply`.** It is told to, and often
   does, but on kagent 1.0.0 with Claude Sonnet 5.5 it sometimes calls `apply` right after
   `show`. The card then shows only the digest: open the round in the console (the link in the
@@ -281,9 +340,16 @@ claude mcp add --transport http kagent http://localhost:8083/mcp
 
 ## Clean up
 
+The fleets are in AWS, not in the cluster: tear the stacks down first (ask the agent, and
+approve each destroy), then the cluster, then the engine's IAM user and key.
+
 ```sh
 kind delete cluster --name turf-kagent
+turf -C setup/aws destroy
 ```
+
+Lambda leaves a CloudWatch log group, `/aws/lambda/<function>`, for every function that was
+called; no configuration here declares them, so remove them by hand for a clean account.
 
 ## Community
 
@@ -293,6 +359,7 @@ https://turf.build/newsletter/. Everything else: https://turf.build/community/.
 
 ## Trademarks
 
-Terraform is a registered trademark of HashiCorp. Kubernetes is a registered trademark, and
+Terraform is a registered trademark of HashiCorp. AWS and AWS Lambda are trademarks of
+Amazon.com, Inc. or its affiliates. Kubernetes is a registered trademark, and
 OpenTofu and Knative trademarks, of The Linux Foundation. Anthropic and Claude are trademarks of Anthropic, PBC.
 Turf is not affiliated with, endorsed by or sponsored by any of them.
