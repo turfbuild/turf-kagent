@@ -32,7 +32,7 @@ tfstate    Lease  lock-tfstate-<stack>-turf
 
 | Namespace | What | Manifest |
 |---|---|---|
-| `kagent` | the controller and UI; the WorkerPool the agent's sandbox runs on; the agent's `Harness`, `AgentTemplate` and `Agent`; a `ModelConfig` for Anthropic; `RemoteMCPServer`s for Turf and the OpenTofu Registry | [`manifests/kagent/`](manifests/kagent) |
+| `kagent` | the controller and UI; the WorkerPool the agent's sandbox runs on; the agent's `Harness`, `AgentTemplate` and `Agent`; a `ModelConfig` for Anthropic; `RemoteMCPServer`s for Turf and the OpenTofu Registry; the `EgressPolicy` for the fleet's URLs | [`manifests/kagent/`](manifests/kagent) |
 | `ate-system` | Agent Substrate's control plane, and the egress gateway every connection from the sandbox goes through | `kagent install` |
 | `turf` | everything that runs Turf: restate-server, the MCP server, the engine, the console, and their Secrets | [`manifests/turf/`](manifests/turf) |
 | `kagent-tfstate` | the state of the stacks that the agents in `kagent` run, and nothing else: a Secret and a Lease per stack | [`manifests/turf/namespace.yaml`](manifests/turf/namespace.yaml) |
@@ -169,7 +169,8 @@ kagent CLI 1.0.0, an Anthropic API key, and an AWS account. kagent 1.0 needs Kub
 ### The AWS key
 
 The engine acts in AWS as an IAM user made for it, `turf-kagent-engine`, whose policy allows
-Lambda functions and IAM roles named `turf-kagent-*` in one region and nothing else.
+Lambda functions in one region and IAM roles, both only under names that start with
+`turf-kagent-`, and nothing else.
 [`setup/aws`](setup/aws) creates the user, the policy and one access key, with your own AWS
 session, and writes the key to `.secrets/`:
 
@@ -287,8 +288,8 @@ claude mcp add --transport http kagent http://localhost:8083/mcp
   `turf`, where the token, the signing key and the engine's AWS key are. The namespace is named
   in three places that must agree: `namespace.yaml`, the Role in `mcp-server.yaml`, and
   `backend_config.namespace` in the agent's prompt.
-- **The engine's AWS key is the demo's**: Lambda functions and IAM roles named `turf-kagent-*`,
-  in one region. Widen the policy in [`setup/aws`](setup/aws) to what your configurations
+- **The engine's AWS key is the demo's**: Lambda functions in one region and IAM roles, both
+  named `turf-kagent-*`. Widen the policy in [`setup/aws`](setup/aws) to what your configurations
   declare, and prefer a role to a key where the cluster has a cloud identity. The key is a
   long-lived one, in a Secret in `turf` that only the engine's pods mount; the roles it may
   create can carry one managed policy, Lambda's basic execution role, and can be passed only
