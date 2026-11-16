@@ -12,7 +12,7 @@
 # Secret (setup/secrets.sh):
 #   http://localhost:8873/login?token=$(cat .secrets/console-token)
 # The MCP server's results carry a console_url for every round at that
-# address (TURF_CONSOLE_URL in mcp-server.yaml), so an approval card's link
+# address (TURF_CONSOLE_URL in mcp-server.yaml), so the link beside an approval request
 # opens on the round whose plan it is.
 apiVersion: v1
 kind: Service

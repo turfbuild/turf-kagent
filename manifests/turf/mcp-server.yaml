@@ -98,7 +98,7 @@ spec:
               value: http://restate.turf.svc:8080
             # Where the console is reached from a browser: through the
             # port-forward console.yaml describes. Every result then carries
-            # a console_url for its round, and an approval card's link opens
+            # a console_url for its round, and the link beside an approval request opens
             # on the plan it is about.
             - name: TURF_CONSOLE_URL
               value: http://localhost:8873

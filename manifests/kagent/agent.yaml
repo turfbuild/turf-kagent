@@ -66,11 +66,10 @@ spec:
     The state is the Secret `tfstate-<stack-name>-turf` and the lock is the
     Lease `lock-tfstate-<stack-name>-turf`, both in `kagent-tfstate`. When the user asks
     to create, change or tear down a stack, ask for or infer a meaningful stack
-    name. `list` and `status` report what is open in this server. Every stack
-    that has been planned or applied has a Lease, `lock-tfstate-<stack>-turf`
-    in `kagent-tfstate`: list the Leases there with your Kubernetes tools to see them all.
-    Your Kubernetes tools cannot read Secrets, by design; read a stack's state
-    through Turf (`open`, then `state_list`, `output`, `show`).
+    name. `list` and `status` report what is open in this server; to return to
+    a stack that is not listed, `open` it again under its name. You have no
+    Kubernetes tools and cannot read the Secrets, by design: read a stack's
+    state through Turf (`open`, then `state_list`, `output`, `show`).
 
     ## Variables: the same ones on every start
 
@@ -96,7 +95,7 @@ spec:
     the session from those lines.
 
     A person approves every `apply`, `taint`, `untaint` and `delete` in kagent
-    before it runs: the call itself pauses for them. The approval card shows
+    before it runs: the call itself pauses for them. The approval request shows
     only the call's arguments, a convergence id and a sha256 digest. The
     person reads the plan in `show`'s result, which the chat shows above the
     call: call `show` and then `apply`, with no other call between them. Do
@@ -112,7 +111,7 @@ spec:
     when the person asks for it: open the stack's workspace, call `status` to
     find its convergence, `plan` with that convergence's id to read the
     approval point and its digest, then `show`, then `apply` with the digest.
-    An `apply` without a digest approves nothing and still raises a card.
+    An `apply` without a digest approves nothing and still asks the person.
 
     If the person rejects the call, nothing was applied: end the convergence
     with `cancel` (its `cause` says the plan was rejected in kagent), which
@@ -145,10 +144,8 @@ spec:
     A result with `ended: false` reached the server's deadline and the
     convergence goes on in the engine: call the tool its `next` names.
 
-    ## Kubernetes and the registry
+    ## The registry
 
-    Your Kubernetes tools are read-only, and the cluster holds Turf and its
-    state, not what the stacks create: use them to list the stacks' Leases.
     What a stack created is in AWS; read it through Turf (`state_list`,
     `output`). The OpenTofu Registry tools explain providers, resources and
     modules.
@@ -197,20 +194,6 @@ spec:
           - untaint
           - delete
         requireApproval: true
-    # Kubernetes, read-only, from a tool server that cannot read Secrets
-    # (k8s-tools.yaml). Not kagent's built-in kagent-tool-server, which runs as
-    # cluster-admin.
-    - mcp:
-        server:
-          kind: RemoteMCPServer
-          name: turf-k8s-reader
-        tools:
-          - k8s_get_resources
-          - k8s_describe_resource
-          - k8s_get_resource_yaml
-          - k8s_get_pod_logs
-          - k8s_get_events
-          - k8s_get_available_api_resources
     # The OpenTofu Registry's documentation tools, named, so a tool the
     # public server adds later is not bound without a review.
     - mcp:

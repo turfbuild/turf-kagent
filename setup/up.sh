@@ -26,12 +26,8 @@ kubectl wait --for=condition=Available --timeout=300s deployment/turf-mcp-server
 kubectl wait --for=condition=Available --timeout=300s deployment/turf-console -n turf
 kubectl wait --for=condition=Ready --timeout=300s restatedeployment/turf-engine -n turf
 
-# The read-only Kubernetes tool server first, so kagent finds its tools when
-# it first connects (it looks again only every few minutes).
-kubectl apply -f "$here/manifests/kagent/k8s-tools.yaml"
-kubectl rollout status deployment/turf-k8s-reader -n kagent --timeout=300s
 kubectl apply -k "$here/manifests/kagent"
-for server in turf turf-k8s-reader opentofu-registry; do
+for server in turf opentofu-registry; do
   kubectl wait --for=condition=Accepted --timeout=120s "remotemcpserver/$server" -n kagent
 done
 kubectl wait --for=condition=Ready --timeout=300s agent/turf -n kagent
