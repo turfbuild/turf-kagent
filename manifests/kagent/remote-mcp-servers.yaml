@@ -21,11 +21,14 @@ spec:
     execution, state in the cluster.
   url: http://turf-mcp-server.turf.svc.cluster.local:3000/mcp
   protocol: STREAMABLE_HTTP
-  # A call gets 30 seconds; the server answers within its --deadline (25s,
-  # manifests/turf/mcp-server.yaml) with where the convergence stands, and the
-  # agent calls again. Raise both together.
-  timeout: 30s
-  sseReadTimeout: 5m0s
+  # A call gets five minutes. The server answers a plan or an apply within its
+  # --deadline (4m, manifests/turf/mcp-server.yaml) with where the convergence
+  # stands, and the agent calls again; keep the deadline under this. Both are
+  # long on purpose: an apply in AWS takes a minute or more, and kagent asks
+  # for approval on every apply call, so an apply that had to be followed
+  # with a second call would ask a second time for the same plan.
+  timeout: 5m0s
+  sseReadTimeout: 10m0s
   headersFrom:
     - name: Authorization
       valueFrom:
@@ -46,16 +49,3 @@ spec:
   protocol: STREAMABLE_HTTP
   timeout: 30s
   sseReadTimeout: 5m0s
----
-# The agent's Kubernetes tools: kagent's tool server in read-only mode, as a
-# ServiceAccount that cannot read Secrets (k8s-tools.yaml).
-apiVersion: api.kagent.dev/v1alpha3
-kind: RemoteMCPServer
-metadata:
-  name: turf-k8s-reader
-  namespace: kagent
-spec:
-  description: Read-only Kubernetes tools that cannot read Secrets
-  url: http://turf-k8s-reader.kagent.svc.cluster.local:8084/mcp
-  protocol: STREAMABLE_HTTP
-  timeout: 30s

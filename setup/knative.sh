@@ -5,7 +5,7 @@
 #   - max-revision-timeout-seconds: 3600, so the engine's revision may hold a
 #     request (one provider's apply) for up to an hour (engine.yaml).
 #   - kubernetes.podspec-volumes-image: enabled, so the engine's pods may mount
-#     the configuration image.
+#     the examples image.
 # Safe to run again.
 set -euo pipefail
 KNATIVE_VERSION=${KNATIVE_VERSION:-1.24.0}

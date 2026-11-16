@@ -1,9 +1,20 @@
-# One namespace for everything Turf: restate-server (the RestateCluster named
-# after it), the MCP server, the engine, and the OpenTofu state the MCP server
-# keeps in Secrets. The operator uses a namespace that already exists without
-# taking it over, so deleting the RestateCluster leaves the namespace and the
-# state where they are.
+# One namespace for everything that runs Turf: restate-server (the
+# RestateCluster named after it), the MCP server and the engine, with their
+# Secrets (the token, the signing key, the engine's AWS key). The operator uses
+# a namespace that already exists without taking it over, so deleting the
+# RestateCluster leaves the namespace where it is.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: turf
+---
+# The state of the stacks that the agents in `kagent` run, and nothing else:
+# the OpenTofu kubernetes backend's Secret
+# and Lease per workspace. It is apart from `turf` because Kubernetes RBAC
+# cannot scope `create` and `list` by name: the MCP server needs every Secret
+# in the namespace its state lives in, so nothing else is kept there. The
+# server has no rights in `turf`, and so cannot read the engine's AWS key.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kagent-tfstate

@@ -1,2 +1,7 @@
-# The key pair and the bearer token setup/secrets.sh makes.
+# The key pair, the bearer tokens and the AWS key setup/ makes.
 .secrets/
+# setup/aws: its state holds the AWS key.
+.terraform/
+*.tfstate
+*.tfstate.*
+.turf/

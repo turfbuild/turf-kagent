@@ -1,8 +1,8 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - k8s-tools.yaml
   - remote-mcp-servers.yaml
   - model-config.yaml
   - harness.yaml
+  - egress-policy.yaml
   - agent.yaml
