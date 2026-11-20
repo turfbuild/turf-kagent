@@ -4,8 +4,10 @@ An infrastructure agent in a Kubernetes cluster, running infrastructure outside 
 [kagent](https://kagent.dev) 1.0 runs the agent in a gVisor sandbox; [Turf](https://turf.build)
 gives it Terraform's commands as tools: plan, approve, apply, round after round. The cluster is
 the control plane: the agent, the approvals, the engine and the state all live in it. What the
-agent runs here is a fleet of AWS Lambda functions, and after each rollout it calls every
-function to prove the fleet answers.
+agent runs comes from a catalog of Terraform configurations, mounted read-only. Here that is a
+fleet of AWS Lambda functions, and after each rollout it calls every function to prove the
+fleet answers. A second configuration from the same catalog installs the NVIDIA AI Cluster
+Runtime on another cluster, and stops to ask a person before the GPU Operator.
 
 Turf's engine runs as a Knative service on restate-server, which scales from zero when a round
 starts, fans out while it runs and drains back to zero. It holds the AWS key; the agent's
@@ -44,14 +46,19 @@ parses the configuration, opens state, and drives the engine through restate-ser
 Its ServiceAccount can read and write Secrets and Leases in `kagent-tfstate`, the OpenTofu
 kubernetes backend's two objects, and nothing else. State has a namespace of its own so that
 this right, which Kubernetes cannot narrow by name, covers no other Secret: the server has no
-rights in `turf`, where the engine's AWS key is.
+rights in `turf`, where the engine's AWS key is. At start an initContainer copies the catalog
+out of the examples image into the pod's own volume, so `init` can install each
+configuration's modules beside it and the server holds several configurations at once (with
+one shared `TF_DATA_DIR` it refuses a second).
 
 **The engine** ([`engine.yaml`](manifests/turf/engine.yaml)) plans and applies, and it is where
 provider plugins run, so it holds the providers' credentials. Here that is one AWS access key,
 in the `turf-aws` Secret that only the engine's pods mount, for an IAM user whose policy covers
 the fleets' own names and nothing else in the account ([`setup/aws`](setup/aws)): what the
 engine may do is what an approved plan may do. Its ServiceAccount is bound to no Role, so it
-changes nothing in the cluster it runs in. It is a `RestateDeployment` in Knative mode. The
+changes nothing in the cluster it runs in. A second, optional Secret, `turf-clusters`, holds a
+kubeconfig for each workload cluster the engine may install on, one key per cluster ("A
+workload cluster", below). It is a `RestateDeployment` in Knative mode. The
 Restate operator creates a Knative Configuration and a cluster-local Route for it and registers
 the Route with restate-server. Knative scales the pods with the work in flight: `minScale: 0`,
 `maxScale: 2`, and `target: 20` concurrent requests per pod as the autoscaler's aim. A new Turf
@@ -63,20 +70,26 @@ every workspace: its convergences, each round's plan, approval point and apply, 
 what, and the lanes as they ran. It is `turf-ui` from the same image, reading restate-server's
 ingress and nothing else. Nothing in the cluster can reach it; you port-forward to it and sign
 in once with its token. Every result the MCP server hands the agent carries a `console_url`
-for its round (`TURF_CONSOLE_URL`), so the agent's message with a plan links to the round at its
-approval point.
+(`TURF_CONSOLE_URL`): the agent gives the workspace's link as soon as it opens a stack, and
+the console is where a person reads the plan an approval request is about.
 
 **restate-server** ([`restate-cluster.yaml`](manifests/turf/restate-cluster.yaml)) is a
 `RestateCluster`, one node with its data on a PersistentVolume, provisioned by the operator.
 
-**The configuration** comes from the examples image, `ghcr.io/turfbuild/turf-examples`: the
-[turfbuild/turf-examples](https://github.com/turfbuild/turf-examples) repository, mounted
-read-only at `/turf/examples` in the MCP server's pod and every engine pod. The agent gives
-Turf a path inside it,
-[`terraform/aws/lambda-fleet`](https://github.com/turfbuild/turf-examples/tree/main/terraform/aws/lambda-fleet):
-one execution role, a fleet of Lambda functions, a public URL for each, and a turf action that
-verifies the rollout. The agent operates it; it does not edit it. A change is a new image
-version.
+**The configurations** come from the examples image, `ghcr.io/turfbuild/turf-examples`: the
+[turfbuild/turf-examples](https://github.com/turfbuild/turf-examples) repository, at
+`/turf/examples` in the MCP server's pod and, read-only, in every engine pod. The agent gives
+Turf a path inside it. Its prompt names two:
+
+- [`terraform/aws/lambda-fleet`](https://github.com/turfbuild/turf-examples/tree/main/terraform/aws/lambda-fleet),
+  the one it runs unless asked otherwise: one execution role, a fleet of Lambda functions, a
+  public URL for each, and a turf action that verifies the rollout.
+- [`use-cases/datacenter/aicr-workload-cluster`](https://github.com/turfbuild/turf-examples/tree/main/use-cases/datacenter/aicr-workload-cluster):
+  the NVIDIA AI Cluster Runtime, 17 Helm releases generated from one AICR recipe, installed on
+  a workload cluster that already exists, with a turf action that asks a person before the
+  GPU Operator.
+
+The agent operates them; it does not edit them. A change is a new image version.
 
 ## Who may talk to whom
 
@@ -150,16 +163,20 @@ Turf calls that change nothing on their own run freely: `init`, `open`, `up`, `d
 infrastructure or state, `apply`, `taint`, `untaint` and `delete`, are bound with
 `requireApproval: true`, so each one pauses the agent until a person approves it in the kagent
 UI. `apply` carries the digest of the plan it applies, so the approval covers exactly that plan,
-and nothing else. kagent's approval request shows the call's arguments, the convergence and the digest; the plan
-itself is the `show` call just above it in the session (see Notes).
+and nothing else. kagent's approval request shows the call's arguments, the convergence and the
+digest. The `plan` result just above it gives the counts and the turf actions the apply will
+stop for, and the plan itself is in the console, on the round's Plan tab. The agent does not
+print the plan document in the session unless asked: `show`'s result for the AICR stack is
+some 200,000 characters.
 
 The configuration also declares a **turf action**: a step of the apply that the agent carries
 out instead of a provider. After the fleet is created or patched, the apply pauses, and the
 agent fetches every function's URL from its sandbox (the shell, through the egress policy
 above), checks each answers with the declared greeting, and reports the result through `apply`
 again, which is one more approval. A turf action that asks the user something reaches them
-through kagent's `ask_user`. The third binding is the OpenTofu Registry's documentation tools,
-each named.
+through kagent's `ask_user`, which the UI shows as a question with choices: the AICR
+configuration has one, bound before the GPU Operator's release. The third binding is the
+OpenTofu Registry's documentation tools, each named.
 
 ## Run it
 
@@ -221,10 +238,11 @@ open "http://localhost:8873/login?token=$(cat .secrets/console-token)"
    skill, runs `init` on `/turf/examples/terraform/aws/lambda-fleet`, opens workspace `demo` on
    the kubernetes backend, starts `up` with the stack's variables (two functions named
    `turf-kagent-demo-0` and `-1`), plans, and stops at the approval point. kagent asks you to
-   approve `apply`, and shows the convergence and the plan digest. The plan itself is the
-   result of `show`, just above the call (9 to add: the execution role and its policy
-   attachment, two functions, a URL and a permission for each, and the rollout marker), and
-   the console shows the round at its approval point with that digest. Engine pods appear in the first terminal as soon as the
+   approve `apply`, and shows the convergence and the plan digest. The `plan` result just above
+   the call counts 9 to add, and the console shows them on the round's Plan tab, at its
+   approval point with that digest: the execution role and its policy attachment, two
+   functions, a URL and a permission for each, and the rollout marker. The agent's line after
+   `open` links the console. Engine pods appear in the first terminal as soon as the
    agent opens the workspace. Approve, and the apply pauses at the turf action: the agent
    fetches both function URLs from its sandbox and reports back through `apply`, a second
    approval. Approve that too. The engine pods go away a minute or so after the round ends, and
@@ -237,14 +255,20 @@ open "http://localhost:8873/login?token=$(cat .secrets/console-token)"
 2. **"Change demo's greeting to 'Patched from the cluster.'"** A second plan, two updates in
    place and the rollout marker, one approval; then the agent fetches both URLs again and
    reports the new greeting, a second.
-3. **"What is in demo?"** Read-only, no pause: the agent reads the stack's state through Turf.
+3. **"Rotate the demo fleet's execution role."** A replacement nothing in the configuration
+   asked for: the agent gives `replace` to `plan`. The plan shows Terraform's two orders side
+   by side. The role is create-before-destroy (`+/-`): the new role is created, both functions
+   are updated in place to assume it, and the old role is deleted last. Its policy attachment
+   is destroy-then-create (`-/+`). The functions keep their URLs, and the agent fetches them
+   again to prove the fleet answered through it.
+4. **"What is in demo?"** Read-only, no pause: the agent reads the stack's state through Turf.
    Ask it for the AWS key, or any Secret, and it cannot: the key is in another namespace, its
    sandbox mounts nothing, and it has no Kubernetes tools. To see every stack yourself,
    `kubectl get leases -n kagent-tfstate`: there is one per stack.
-4. **"Tear down the demo stack."** Another approval, this time for a destroy plan. Reject
+5. **"Tear down the demo stack."** Another approval, this time for a destroy plan. Reject
    it with a reason and nothing is applied: the agent cancels the convergence, which frees the
    stack's lock, and repeats your reason back. Ask again and approve, and the fleet is gone.
-5. **Several at once.** Open three sessions a minute apart and ask each for a fleet of its own
+6. **Several at once.** Open three sessions a minute apart and ask each for a fleet of its own
    (`alpha`, `bravo`, `charlie`). The convergences run side by side, a second engine pod comes
    and goes with the work, and each session gets its own approvals. Every pod that takes part in a
    stack's round starts that stack's AWS provider, most of a gigabyte each, which is what
@@ -253,6 +277,35 @@ open "http://localhost:8873/login?token=$(cat .secrets/console-token)"
 
 Restate's UI shows each round's invocations: `kubectl port-forward -n turf svc/restate 9070`, then
 http://localhost:9070.
+
+### A workload cluster
+
+The same agent installs the NVIDIA AI Cluster Runtime on another cluster. The engine needs
+that cluster's kubeconfig, and nothing else does: a key `<cluster>.kubeconfig` in the Secret
+`turf-clusters`, which the engine's pods mount at `/turf/clusters`. Adding a cluster is adding
+a key; the pods see it within a minute. With kind, a second cluster on the same Docker network
+is reachable by its node's name:
+
+```sh
+kind create cluster --name aicr-1 --image kindest/node:v1.34.0
+kind get kubeconfig --internal --name aicr-1 > .secrets/aicr-1.kubeconfig
+kubectl config use-context kind-turf-kagent
+kubectl -n turf create secret generic turf-clusters \
+  --from-file=aicr-1.kubeconfig=.secrets/aicr-1.kubeconfig
+```
+
+**"Install the NVIDIA AI Cluster Runtime (AICR) on the workload cluster aicr-1."** The agent
+runs `init` on `/turf/examples/use-cases/datacenter/aicr-workload-cluster`, opens workspace
+`aicr-1`, and plans 31 to add, the 17 Helm releases among them. Approve, and the apply
+installs everything the GPU Operator depends on, then stops at a turf action: kagent shows the
+agent's question, whether the cluster's maintenance window is open, with a yes and a no. The
+console's Round tab shows the same prompt, waiting on you. Answer yes and approve the `apply`
+that carries your answer, and the operator and the last level of the graph install. Answer no
+and the round halts with your reason; what is installed stays. On a warm node it took about
+five minutes from the ask to converged, two of them before the question.
+
+That kubeconfig is kind's admin credential. For a real cluster, give the engine a
+ServiceAccount token whose Role covers what the stack installs.
 
 ### Other clients
 
@@ -298,9 +351,10 @@ claude mcp add --transport http kagent http://localhost:8083/mcp
   restate-server's admin API for its startup check; a mirror narrows the first.
 - **An apply can take minutes.** kagent gives a tool call 30 seconds by default, which an apply
   in AWS outlasts: the call times out, the agent calls `apply` again, and kagent asks a
-  second time for the same plan. So the Turf RemoteMCPServer's `timeout` is five minutes and
-  the server's `--deadline` four ([`remote-mcp-servers.yaml`](manifests/kagent/remote-mcp-servers.yaml),
-  [`mcp-server.yaml`](manifests/turf/mcp-server.yaml)). Keep the deadline under the timeout.
+  second time for the same plan. So the Turf RemoteMCPServer's `timeout` is fifteen minutes and
+  the server's `--deadline` fourteen ([`remote-mcp-servers.yaml`](manifests/kagent/remote-mcp-servers.yaml),
+  [`mcp-server.yaml`](manifests/turf/mcp-server.yaml)): the first levels of the AICR stack took
+  nine minutes in one call on a slow node. Keep the deadline under the timeout.
 - **A destroy leaves the functions' log groups** (`/aws/lambda/turf-kagent-*`). Lambda makes
   one the first time a function runs; the configuration does not manage them and the engine's
   key cannot delete them.
@@ -310,17 +364,20 @@ claude mcp add --transport http kagent http://localhost:8083/mcp
   credential the agent is not meant to have; there, let a provider's action do the check in
   the engine.
 - **The examples image holds every example**, and the agent can `init` any path in it. What a
-  plan can then do is still bounded by the engine's key and a person's approval. Only
+  plan can then do is still bounded by the engine's credentials and a person's approval. Only
   configurations that commit their lock file and write nothing at plan time run from the
   read-only mount.
+- **The AICR stack wants a cluster that can take it.** A single-node kind cluster with 4 GB to
+  spare runs it, with no GPU: the GPU Operator lands idle. The turf-examples README has what
+  each component does there.
 - **The sandbox has `wget`, not `curl`** (busybox, in kagent's runtime image), and the agent's
   prompt says so. It trusts the egress gateway's CA, which terminates TLS to apply the policy.
 - **kagent's approval request shows only the call**: a convergence id and a digest. On kagent
   1.0.0 with Claude Sonnet 5.5 the agent does not write the plan out above it, however the
-  prompt asks, so the prompt has it call `show` right before `apply` and say what the plan was
-  in its report. To read a plan before you approve it: the `show` result just above the
-  request, the round in the console (the link in every result; its Plan tab is the plan), or
-  reject and ask the agent for the plan.
+  prompt asks: it goes from `plan` straight to `apply`. To read a plan before you approve it:
+  the `plan` result just above the request has the counts and the turf actions, the round in
+  the console has the plan itself (the agent links the workspace after `open`; the Plan tab is
+  the plan), or reject and ask the agent to `show` it.
 - **Every authenticated client is one principal.** The token says that a caller may use the
   server, not which caller it is. kagent can mint a per-Actor JWT instead (`actorJwt` on the
   `RemoteMCPServer`), once the server can check one.

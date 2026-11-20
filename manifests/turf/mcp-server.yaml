@@ -73,6 +73,30 @@ spec:
         app: turf-mcp-server
     spec:
       serviceAccountName: turf-mcp-server
+      # The server's own copy of the catalog, made at start from the examples
+      # image. init installs each configuration's modules beside it
+      # (<configuration>/.terraform, tofu's default), so the server holds
+      # several configurations at once: with one absolute TF_DATA_DIR it
+      # refuses a second. The engine still mounts the image itself, read-only,
+      # at the same path, and plans from that.
+      initContainers:
+        - name: catalog
+          image: ghcr.io/turfbuild/turf-mcp-server:v1.4.0
+          command: ["/bin/sh", "-c", "cp -a /catalog/. /turf/examples/"]
+          securityContext:
+            runAsUser: 1000
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: catalog
+              mountPath: /catalog
+              readOnly: true
+            - name: examples
+              mountPath: /turf/examples
       containers:
         - name: turf-mcp-server
           # The same image as engine.yaml and console.yaml: keep the three tags equal.
@@ -84,8 +108,8 @@ spec:
             - --plugin-cache-dir=/turf/plugins
             # Every convergence call returns within this deadline, with the
             # stage it reached for the agent to call again. The RemoteMCPServer
-            # gives a call five minutes: keep the deadline under its timeout.
-            - --deadline=4m
+            # gives a call fifteen minutes: keep the deadline under its timeout.
+            - --deadline=14m
           env:
             - name: TURF_MCP_AUTH_TOKEN
               valueFrom:
@@ -102,10 +126,6 @@ spec:
             # on the plan it is about.
             - name: TURF_CONSOLE_URL
               value: http://localhost:8873
-            # Where init's module install goes, as tofu's TF_DATA_DIR: the
-            # configurations under /turf/examples are read-only.
-            - name: TF_DATA_DIR
-              value: /turf/data
             - name: TF_CLI_CONFIG_FILE
               value: /turf/cli/turf.tfrc
           ports:
@@ -128,16 +148,13 @@ spec:
               drop: [ALL]
             seccompProfile:
               type: RuntimeDefault
-          # The examples image, read-only: the agent names a path inside it to
-          # init, and the same path exists in the engine's pods (engine.yaml),
-          # so no --workdir mapping is needed. The rest is this pod's own
-          # scratch.
+          # The server's copy of the examples image (the initContainer above):
+          # the agent names a path inside it to init, and the same path exists
+          # in the engine's pods (engine.yaml), read-only there, so no --workdir
+          # mapping is needed. The rest is this pod's own scratch.
           volumeMounts:
             - name: examples
               mountPath: /turf/examples
-              readOnly: true
-            - name: data
-              mountPath: /turf/data
             - name: plugins
               mountPath: /turf/plugins
             - name: tmp
@@ -146,11 +163,11 @@ spec:
               mountPath: /turf/cli
               readOnly: true
       volumes:
-        - name: examples
+        - name: catalog
           image:
-            reference: ghcr.io/turfbuild/turf-examples:1.0.0
+            reference: ghcr.io/turfbuild/turf-examples:1.1.0
             pullPolicy: IfNotPresent
-        - name: data
+        - name: examples
           emptyDir: {}
         - name: plugins
           emptyDir: {}

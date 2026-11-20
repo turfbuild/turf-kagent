@@ -21,14 +21,15 @@ spec:
     execution, state in the cluster.
   url: http://turf-mcp-server.turf.svc.cluster.local:3000/mcp
   protocol: STREAMABLE_HTTP
-  # A call gets five minutes. The server answers a plan or an apply within its
-  # --deadline (4m, manifests/turf/mcp-server.yaml) with where the convergence
-  # stands, and the agent calls again; keep the deadline under this. Both are
-  # long on purpose: an apply in AWS takes a minute or more, and kagent asks
-  # for approval on every apply call, so an apply that had to be followed
-  # with a second call would ask a second time for the same plan.
-  timeout: 5m0s
-  sseReadTimeout: 10m0s
+  # A call gets fifteen minutes. The server answers a plan or an apply within
+  # its --deadline (14m, manifests/turf/mcp-server.yaml) with where the
+  # convergence stands, and the agent calls again; keep the deadline under
+  # this. Both are long on purpose: an apply in AWS takes a minute or more and
+  # the first levels of the AICR stack several, and kagent asks for approval
+  # on every apply call, so an apply that had to be followed with a second
+  # call would ask a second time for the same plan.
+  timeout: 15m0s
+  sseReadTimeout: 20m0s
   headersFrom:
     - name: Authorization
       valueFrom:
