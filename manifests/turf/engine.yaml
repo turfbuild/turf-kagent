@@ -133,15 +133,24 @@ spec:
             - name: cli-config
               mountPath: /turf/cli
               readOnly: true
+            # One kubeconfig per workload cluster the engine may reach, at
+            # /turf/clusters/<cluster>.kubeconfig (the turf-clusters Secret,
+            # one key per cluster, so adding a cluster is adding a key and
+            # needs no new revision). Like the AWS key above: only the engine
+            # mounts it, and the agent never sees it.
+            - name: clusters
+              mountPath: /turf/clusters
+              readOnly: true
       volumes:
         # Knative admits image volumes with kubernetes.podspec-volumes-image
         # (setup/knative.sh).
         # The examples image: the turfbuild/turf-examples repository, read-only.
         # The agent gives Turf the path of the configuration to run inside it
-        # (terraform/aws/lambda-fleet).
+        # (terraform/aws/lambda-fleet, or
+        # use-cases/datacenter/aicr-workload-cluster).
         - name: examples
           image:
-            reference: ghcr.io/turfbuild/turf-examples:1.0.0
+            reference: ghcr.io/turfbuild/turf-examples:1.1.0
             pullPolicy: IfNotPresent
         - name: data
           emptyDir: {}
@@ -150,3 +159,9 @@ spec:
         - name: cli-config
           configMap:
             name: turf-cli-config
+        # Optional: the stack runs without it, and the Lambda fleet needs none.
+        # README, "A workload cluster".
+        - name: clusters
+          secret:
+            secretName: turf-clusters
+            optional: true
