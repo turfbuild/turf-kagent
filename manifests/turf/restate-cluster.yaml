@@ -23,6 +23,9 @@ spec:
     env:
       - name: RESTATE_EXPERIMENTAL_ENABLE_PREFLIGHT_SIGNAL_RECORDING
         value: "true"
+      # restate-server's own telemetry, which Turf's local engine also turns off.
+      - name: RESTATE_DISABLE_TELEMETRY
+        value: "true"
   storage:
     storageRequestBytes: 10737418240 # 10 GiB
   # A provider's apply is one step of the engine's, held open on one HTTP/2
