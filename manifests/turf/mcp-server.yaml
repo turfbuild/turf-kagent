@@ -87,6 +87,12 @@ spec:
             # gives a call five minutes: keep the deadline under its timeout.
             - --deadline=4m
           env:
+            # Uncomment to accept the Turf license terms (https://turf.build/license/v1/):
+            # setting it accepts them. Without it the server starts and lists its tools,
+            # but refuses every call with the license notice. See "Accept the license"
+            # in the README.
+            # - name: TURF_ACCEPT_EULA
+            #   value: "yes"
             - name: TURF_MCP_AUTH_TOKEN
               valueFrom:
                 secretKeyRef:

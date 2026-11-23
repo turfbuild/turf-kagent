@@ -78,6 +78,11 @@ spec:
             - --plugin-cache-dir=/turf/plugins
             - --data-dir=/turf/data
           env:
+            # Uncomment to accept the Turf license terms (https://turf.build/license/v1/):
+            # setting it accepts them. Without it every engine pod prints the license
+            # notice and exits with code 77. See "Accept the license" in the README.
+            # - name: TURF_ACCEPT_EULA
+            #   value: "yes"
             - name: TURF_ENGINE_IDENTITY_KEYS
               valueFrom:
                 secretKeyRef:
