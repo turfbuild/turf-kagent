@@ -19,7 +19,7 @@
 # copies them back rather than minting new ones, because restate-server, the
 # engine and the MCP server read them only at start.
 set -euo pipefail
-TURF_VERSION=${TURF_VERSION:-v1.5.0}
+TURF_VERSION=${TURF_VERSION:-v1.5.1}
 here=$(cd "$(dirname "$0")/.." && pwd)
 dir=${SECRETS_DIR:-$here/.secrets}
 mkdir -p "$dir" && chmod 700 "$dir"
