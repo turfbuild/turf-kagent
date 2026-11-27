@@ -46,7 +46,7 @@ spec:
         - name: turf-ui
           # The same image as mcp-server.yaml and engine.yaml: keep the three
           # tags equal.
-          image: ghcr.io/turfbuild/turf-mcp-server:v1.4.0
+          image: ghcr.io/turfbuild/turf-mcp-server:v1.5.0
           command: ["/turf-ui"]
           args:
             # Off loopback, which turf-ui allows because a token gates it
@@ -58,6 +58,11 @@ spec:
             # Must match the engine's (engine.yaml runs it with its default, on).
             - --scopes=on
           env:
+            # Uncomment to accept the Turf license terms (https://turf.build/license/v1/):
+            # setting it accepts them. Without it the console prints the license notice
+            # and exits with code 77. See "Accept the license" in the README.
+            # - name: TURF_ACCEPT_EULA
+            #   value: "yes"
             - name: TURF_CONSOLE_AUTH_TOKEN
               valueFrom:
                 secretKeyRef:

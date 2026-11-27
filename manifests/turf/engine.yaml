@@ -64,7 +64,7 @@ spec:
       containers:
         - name: turf-engine
           # The same image as mcp-server.yaml and console.yaml: keep the three tags equal.
-          image: ghcr.io/turfbuild/turf-mcp-server:v1.4.0
+          image: ghcr.io/turfbuild/turf-mcp-server:v1.5.0
           command: ["/turf-engine"]
           args:
             - --addr=0.0.0.0:9080
@@ -78,6 +78,11 @@ spec:
             - --plugin-cache-dir=/turf/plugins
             - --data-dir=/turf/data
           env:
+            # Uncomment to accept the Turf license terms (https://turf.build/license/v1/):
+            # setting it accepts them. Without it every engine pod prints the license
+            # notice and exits with code 77. See "Accept the license" in the README.
+            # - name: TURF_ACCEPT_EULA
+            #   value: "yes"
             - name: TURF_ENGINE_IDENTITY_KEYS
               valueFrom:
                 secretKeyRef:

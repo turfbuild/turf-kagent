@@ -166,13 +166,35 @@ each named.
 You need Docker, [kind](https://kind.sigs.k8s.io) v0.32 or later, kubectl, Helm 3 or later, the
 kagent CLI 1.0.0, an Anthropic API key, and an AWS account. kagent 1.0 needs Kubernetes 1.37.
 
+### Accept the license
+
+Turf is proprietary software under the
+[Turf Community Edition License 1.0](https://turf.build/license/v1/): free for individuals,
+education and small businesses within the Community limits; government and larger
+organizations need a [commercial license](https://turf.build/licensing/), and anyone may
+evaluate Turf, not in production, for 30 days. From release 1.5 no Turf binary does any work
+until the terms are accepted, and nothing here accepts them for you.
+
+- **In the cluster**, each of [`mcp-server.yaml`](manifests/turf/mcp-server.yaml),
+  [`engine.yaml`](manifests/turf/engine.yaml) and [`console.yaml`](manifests/turf/console.yaml)
+  carries a commented-out `TURF_ACCEPT_EULA` entry in its container's `env:`. Uncommenting the
+  three, with the value `yes`, accepts the terms: do it once you have read them and accept
+  them, before `setup/up.sh` applies the manifests. Without it the engine's pods and the
+  console exit with code 77 (so `setup/up.sh` times out waiting for them), and the MCP server
+  starts but refuses every call with the license notice.
+- **On your machine**, the `turf` CLI that applies `setup/aws` below needs
+  `turf license accept` once (or `TURF_ACCEPT_EULA=yes` in its environment).
+
+Every way to accept, per binary: https://turf.build/docs/start/install/#accept-the-license.
+
 ### The AWS key
 
 The engine acts in AWS as an IAM user made for it, `turf-kagent-engine`, whose policy allows
 Lambda functions in one region and IAM roles, both only under names that start with
 `turf-kagent-`, and nothing else.
 [`setup/aws`](setup/aws) creates the user, the policy and one access key, with your own AWS
-session, and writes the key to `.secrets/`:
+session, and writes the key to `.secrets/`. With Turf, run `turf license accept` once on this
+machine first if you have not ([Accept the license](#accept-the-license)):
 
 ```sh
 turf -C setup/aws up        # or: tofu -chdir=setup/aws init && tofu -chdir=setup/aws apply
