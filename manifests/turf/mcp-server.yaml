@@ -76,7 +76,7 @@ spec:
       containers:
         - name: turf-mcp-server
           # The same image as engine.yaml and console.yaml: keep the three tags equal.
-          image: ghcr.io/turfbuild/turf-mcp-server:v1.4.0
+          image: ghcr.io/turfbuild/turf-mcp-server:v1.5.0
           args:
             - --transport=http
             - --addr=:3000

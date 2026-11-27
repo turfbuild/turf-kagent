@@ -46,7 +46,7 @@ spec:
         - name: turf-ui
           # The same image as mcp-server.yaml and engine.yaml: keep the three
           # tags equal.
-          image: ghcr.io/turfbuild/turf-mcp-server:v1.4.0
+          image: ghcr.io/turfbuild/turf-mcp-server:v1.5.0
           command: ["/turf-ui"]
           args:
             # Off loopback, which turf-ui allows because a token gates it
